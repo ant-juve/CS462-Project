@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: bfaa4ad0a900da94ab84fe2f1826c605
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 92152
+  packageName: 3D Scifi Kit Starter Kit
+  packageVersion: 3.5
+  assetPath: Assets/Creepy_Cat/3D Scifi Kit Starter Kit_HD/Scripts/Turn_Move.cs
+  uploadId: 903402
