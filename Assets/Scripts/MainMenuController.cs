@@ -3,7 +3,7 @@ using UnityEngine.SceneManagement;
 
 public class MainMenuController : MonoBehaviour
 {
-    [SerializeField] private string gameplaySceneName = "SpaceStation";
+    [SerializeField] private string gameplaySceneName;
 
     public void PlayGame()
     {
