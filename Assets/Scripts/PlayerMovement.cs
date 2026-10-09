@@ -3,7 +3,7 @@ using UnityEngine;
 public class PlayerMovement : MonoBehaviour
 {
     public float moveSpeed = 5f;
-    public float mouseSensitivity = 0.5f;
+    public float mouseSensitivity = 2f;
     public float gravity = -9.81f;
 
     private CharacterController controller;
@@ -22,6 +22,10 @@ public class PlayerMovement : MonoBehaviour
 
     void Update()
     {
+        // Freeze movement and mouse look while the pause menu is open
+        if (PauseMenuController.IsPaused)
+            return;
+
         // WASD movement
         float moveX = Input.GetAxis("Horizontal");
         float moveZ = Input.GetAxis("Vertical");
