@@ -16,6 +16,10 @@ public class PlayerMovement : MonoBehaviour
         controller = GetComponent<CharacterController>();
         playerCamera = GetComponentInChildren<Camera>();
 
+        // Make sure the player always has a hotbar, even if it wasn't added in the scene
+        if (GetComponent<Hotbar>() == null)
+            gameObject.AddComponent<Hotbar>();
+
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }
