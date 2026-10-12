@@ -10,14 +10,19 @@ public class Hotbar : MonoBehaviour
 {
     public const int SlotCount = 5;
 
-    public float pickupRange = 3f;
+    public float pickupRange = 2.0f; // from the eyes; covers the floor about 1m ahead, within a bend and a reach
     public KeyCode pickupKey = KeyCode.E;
     public KeyCode dropKey = KeyCode.Q;
     public float dropDistance = 1.5f;
 
+    [Header("Held Item")]
+    [Tooltip("Where held items float when there are no first-person arms to hold them")]
+    public Vector3 handOffset = new Vector3(0.25f, -0.12f, 0.55f); // right, down, forward from the camera
+
     [Header("UI")]
     public float slotSize = 80f;
     public float slotSpacing = 8f;
+    public float bottomMargin = 60f; // gap between the bar and the bottom of the screen
     public Color slotColor = new Color(0f, 0f, 0f, 0.55f);
     public Color selectedColor = new Color(0.3f, 0.8f, 1f, 1f);
     public Color borderColor = new Color(1f, 1f, 1f, 0.25f);
@@ -26,6 +31,7 @@ public class Hotbar : MonoBehaviour
     private int selectedIndex = 0;
 
     private Camera playerCamera;
+    private Transform hand;
     private PickupItem lookedAtItem;
 
     private Image[] slotBorders;
@@ -36,13 +42,46 @@ public class Hotbar : MonoBehaviour
 
     public PickupItem SelectedItem => slots[selectedIndex];
     public int SelectedIndex => selectedIndex;
+    public Transform HandAnchor => hand;
+
+    // Fired after an item goes into the hotbar
+    public event System.Action<PickupItem> PickedUp;
+
+    // Set by first-person arms to animate grabbing. Called with the item and a callback to run
+    // when the hand reaches it; the item only goes into the hotbar at that point.
+    public System.Action<PickupItem, System.Action> GrabAnimation;
+    public bool IsGrabbing { get; private set; }
 
     void Start()
     {
-        playerCamera = GetComponentInChildren<Camera>();
+        playerCamera = Camera.main;
+        EnsureHand();
+
         BuildUI();
-        RefreshUI();
-        Debug.Log($"Hotbar ready on {name} ({SlotCount} slots)");
+        OnSlotsChanged();
+    }
+
+    void EnsureHand()
+    {
+        if (hand != null)
+            return;
+
+        // Default: float held items in front of the camera, lower right
+        hand = new GameObject("Hand").transform;
+        hand.SetParent(Camera.main.transform, false);
+        hand.localPosition = handOffset;
+        hand.localRotation = Quaternion.Euler(0f, -15f, 0f); // angle slightly toward the center
+    }
+
+    // Lets first-person arms take over: held items follow this transform (e.g. a point in the palm)
+    public void AttachHandTo(Transform grip)
+    {
+        EnsureHand();
+        hand.SetParent(grip, false);
+        hand.localPosition = Vector3.zero;
+        hand.localRotation = Quaternion.identity;
+        if (slotBorders != null)
+            OnSlotsChanged();
     }
 
     void Update()
@@ -51,6 +90,12 @@ public class Hotbar : MonoBehaviour
         {
             promptText.text = "";
             return;
+        }
+
+        if (IsGrabbing)
+        {
+            promptText.text = "";
+            return; // let the grab finish before switching, dropping or grabbing again
         }
 
         HandleSlotSelection();
@@ -97,27 +142,48 @@ public class Hotbar : MonoBehaviour
     public void SelectSlot(int index)
     {
         selectedIndex = Mathf.Clamp(index, 0, SlotCount - 1);
-        RefreshUI();
+        OnSlotsChanged();
     }
 
-    // Returns false if the hotbar is full
+    // Returns false if the hotbar is full or a grab is already in progress
     public bool TryPickUp(PickupItem item)
     {
         // Prefer the selected slot if it's empty, otherwise the first free one
         int slot = slots[selectedIndex] == null ? selectedIndex : FirstEmptySlot();
-        if (slot < 0)
+        if (slot < 0 || IsGrabbing)
             return false;
 
-        slots[slot] = item;
-        item.OnPickedUp();
-        RefreshUI();
+        // Switch to the slot the item will go into, so it ends up in the hand
+        SelectSlot(slot);
+
+        if (GrabAnimation == null)
+        {
+            FinishPickUp(item);
+            return true;
+        }
+
+        IsGrabbing = true;
+        item.BeginGrab();
+        GrabAnimation(item, () =>
+        {
+            IsGrabbing = false;
+            FinishPickUp(item);
+        });
         return true;
+    }
+
+    void FinishPickUp(PickupItem item)
+    {
+        slots[selectedIndex] = item;
+        item.OnPickedUp();
+        OnSlotsChanged();
+        PickedUp?.Invoke(item);
     }
 
     public void DropSelected()
     {
         PickupItem item = slots[selectedIndex];
-        if (item == null)
+        if (item == null || IsGrabbing)
             return;
 
         slots[selectedIndex] = null;
@@ -126,7 +192,7 @@ public class Hotbar : MonoBehaviour
         Vector3 dropPosition = playerCamera.transform.position + forward * dropDistance;
         item.OnDropped(dropPosition, Quaternion.LookRotation(forward));
 
-        RefreshUI();
+        OnSlotsChanged();
     }
 
     int FirstEmptySlot()
@@ -137,6 +203,27 @@ public class Hotbar : MonoBehaviour
                 return i;
         }
         return -1;
+    }
+
+    void OnSlotsChanged()
+    {
+        UpdateHeldItem();
+        RefreshUI();
+    }
+
+    // Only the selected item is shown in the hand; the rest stay hidden in the hotbar
+    void UpdateHeldItem()
+    {
+        for (int i = 0; i < SlotCount; i++)
+        {
+            if (slots[i] == null)
+                continue;
+
+            if (i == selectedIndex)
+                slots[i].Hold(hand);
+            else
+                slots[i].Stow();
+        }
     }
 
     void RefreshUI()
@@ -176,7 +263,7 @@ public class Hotbar : MonoBehaviour
         float totalWidth = SlotCount * slotSize + (SlotCount - 1) * slotSpacing;
         RectTransform bar = CreateRect("Hotbar", canvasObject.transform);
         bar.anchorMin = bar.anchorMax = bar.pivot = new Vector2(0.5f, 0f);
-        bar.anchoredPosition = new Vector2(0f, 30f);
+        bar.anchoredPosition = new Vector2(0f, bottomMargin);
         bar.sizeDelta = new Vector2(totalWidth, slotSize);
 
         slotBorders = new Image[SlotCount];
@@ -194,7 +281,7 @@ public class Hotbar : MonoBehaviour
             slotBorders[i] = slot.gameObject.AddComponent<Image>();
 
             RectTransform background = CreateRect("Background", slot);
-            Stretch(background, 3f);
+            Stretch(background, 4f);
             background.gameObject.AddComponent<Image>().color = slotColor;
 
             RectTransform icon = CreateRect("Icon", slot);
@@ -217,7 +304,7 @@ public class Hotbar : MonoBehaviour
         // Name of the selected item, just above the bar
         RectTransform nameRect = CreateRect("SelectedName", canvasObject.transform);
         nameRect.anchorMin = nameRect.anchorMax = nameRect.pivot = new Vector2(0.5f, 0f);
-        nameRect.anchoredPosition = new Vector2(0f, 30f + slotSize + 8f);
+        nameRect.anchoredPosition = new Vector2(0f, bottomMargin + slotSize + 8f);
         nameRect.sizeDelta = new Vector2(totalWidth, 30f);
         selectedNameText = CreateText(nameRect, 22f, TextAlignmentOptions.Center);
 
