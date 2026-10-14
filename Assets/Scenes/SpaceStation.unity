@@ -146528,6 +146528,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1651165036}
+    - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1651165037}
   m_SourcePrefab: {fileID: 100100000, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
 --- !u!1 &1651165025 stripped
 GameObject:
@@ -146638,6 +146641,23 @@ MonoBehaviour:
   frames: 0
   started: 0
   floor: 3.4028235e+38
+--- !u!114 &1651165037
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651165025}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fa1bfab6011e147198a7659e10dce639, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NearbyShadowLights
+  maxShadowLights: 2
+  shadowStrength: 1
+  fadeSpeed: 2.5
+  checkInterval: 0.2
+  chestHeight: 1.2
 --- !u!1001 &1652476398
 PrefabInstance:
   m_ObjectHideFlags: 0
