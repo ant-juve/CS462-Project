@@ -74,6 +74,8 @@ public class FirstPersonArms : MonoBehaviour
     public float bobFade = 3f;
     public float sprintBobMultiplier = 1.6f;
     public float sprintLower = 0.03f;
+    [Tooltip("How quickly the arms ease down when you start sprinting and back up when you stop")]
+    public float sprintBlendSpeed = 3f;
 
     [Header("Idle Breathing")]
     public float breatheAmount = 0.004f;
@@ -148,6 +150,7 @@ public class FirstPersonArms : MonoBehaviour
     private Quaternion lastCameraRotation;
     private float bobPhase;
     private float bobStrength;
+    private float sprintWeight;
     private float smoothedLift;
     private float landTimer = 1f;
     private bool wasGrounded = true;
@@ -767,11 +770,13 @@ public class FirstPersonArms : MonoBehaviour
         if (sprinting)
             target *= sprintBobMultiplier;
         bobStrength = Mathf.MoveTowards(bobStrength, target, bobFade * dt);
+        sprintWeight = Mathf.MoveTowards(sprintWeight, sprinting && grounded ? 1f : 0f, sprintBlendSpeed * dt);
+        float lower = sprintLower * Mathf.SmoothStep(0f, 1f, sprintWeight);
 
         // One side-to-side sway per two steps, one bounce per step
         return new Vector3(
             Mathf.Sin(bobPhase) * bobSize.x * bobStrength,
-            -Mathf.Abs(Mathf.Cos(bobPhase)) * bobSize.y * bobStrength - (sprinting ? sprintLower * bobStrength : 0f),
+            -Mathf.Abs(Mathf.Cos(bobPhase)) * bobSize.y * bobStrength - lower,
             0f);
     }
 
