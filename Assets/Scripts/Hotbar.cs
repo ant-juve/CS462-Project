@@ -33,6 +33,9 @@ public class Hotbar : MonoBehaviour
     private Camera playerCamera;
     private Transform hand;
     private PickupItem lookedAtItem;
+    private Collider lookedAtCollider; // what the last look raycast hit, so the item lookup only runs when it changes
+    private string pickupPrompt = "";  // built once per item looked at, not every frame
+    private readonly RaycastHit[] lookHits = new RaycastHit[8];
 
     private Image[] slotBorders;
     private Image[] slotIcons;
@@ -41,11 +44,6 @@ public class Hotbar : MonoBehaviour
     private TextMeshProUGUI promptText;
 
     public PickupItem SelectedItem => slots[selectedIndex];
-    public int SelectedIndex => selectedIndex;
-    public Transform HandAnchor => hand;
-
-    // Fired after an item goes into the hotbar
-    public event System.Action<PickupItem> PickedUp;
 
     // Set by first-person arms to animate grabbing. Called with the item and a callback to run
     // when the hand reaches it; the item only goes into the hotbar at that point.
@@ -88,13 +86,13 @@ public class Hotbar : MonoBehaviour
     {
         if (PauseMenuController.IsPaused)
         {
-            promptText.text = "";
+            SetPrompt("");
             return;
         }
 
         if (IsGrabbing)
         {
-            promptText.text = "";
+            SetPrompt("");
             return; // let the grab finish before switching, dropping or grabbing again
         }
 
@@ -125,18 +123,54 @@ public class Hotbar : MonoBehaviour
 
     void UpdateLookedAtItem()
     {
-        lookedAtItem = null;
+        Collider hitCollider = LookRaycast();
 
-        Ray ray = new Ray(playerCamera.transform.position, playerCamera.transform.forward);
-        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, ~0, QueryTriggerInteraction.Collide))
-            lookedAtItem = hit.collider.GetComponentInParent<PickupItem>();
+        // Looking at something new: find out whether it's an item, and build its prompt
+        if (hitCollider != lookedAtCollider)
+        {
+            lookedAtCollider = hitCollider;
+            lookedAtItem = hitCollider != null ? hitCollider.GetComponentInParent<PickupItem>() : null;
+            pickupPrompt = lookedAtItem != null ? $"[{pickupKey}] Pick up {lookedAtItem.itemName}" : "";
+        }
+        else if (lookedAtItem != null && !lookedAtItem.isActiveAndEnabled)
+        {
+            lookedAtItem = null; // picked up since the last frame
+            pickupPrompt = "";
+        }
 
         if (lookedAtItem == null)
-            promptText.text = "";
+            SetPrompt("");
         else if (FirstEmptySlot() < 0)
-            promptText.text = "Hotbar full";
+            SetPrompt("Hotbar full");
         else
-            promptText.text = $"[{pickupKey}] Pick up {lookedAtItem.itemName}";
+            SetPrompt(pickupPrompt);
+    }
+
+    // The nearest thing in front of the eyes, ignoring the player's own colliders (the camera can sit
+    // right at the edge of the player's capsule, e.g. when the head tips forward to look down)
+    Collider LookRaycast()
+    {
+        Transform eye = playerCamera.transform;
+        int count = Physics.RaycastNonAlloc(eye.position, eye.forward, lookHits, pickupRange, ~0, QueryTriggerInteraction.Collide);
+        Collider nearest = null;
+        float nearestDistance = float.MaxValue;
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = lookHits[i].collider;
+            if (lookHits[i].distance < nearestDistance && !c.transform.IsChildOf(transform))
+            {
+                nearest = c;
+                nearestDistance = lookHits[i].distance;
+            }
+        }
+        return nearest;
+    }
+
+    // Only touches the text when it changes; setting it makes TextMeshPro rebuild its mesh
+    void SetPrompt(string text)
+    {
+        if (!ReferenceEquals(promptText.text, text) && promptText.text != text)
+            promptText.text = text;
     }
 
     public void SelectSlot(int index)
@@ -177,7 +211,6 @@ public class Hotbar : MonoBehaviour
         slots[selectedIndex] = item;
         item.OnPickedUp();
         OnSlotsChanged();
-        PickedUp?.Invoke(item);
     }
 
     public void DropSelected()
