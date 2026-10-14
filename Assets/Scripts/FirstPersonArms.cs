@@ -55,10 +55,15 @@ public class FirstPersonArms : MonoBehaviour
     [Header("Resting")]
     [Tooltip("When empty, arms hang down at your sides from the body's shoulders. How far the shoulders are below eye level and out from the center, in meters")]
     public float shoulderDrop = 0.25f;
-    public float shoulderWidth = 0.18f;
+    public float shoulderWidth = 0.2f;
     [Tooltip("How far out to the side and forward the hanging arms angle (per meter of arm)")]
-    public float hangOutward = 0.15f;
-    public float hangForward = 0.1f;
+    public float hangOutward = 0.35f;
+    public float hangForward = -0.05f;
+    [Tooltip("How much resting fingers curl (0 = straight, 1 = fist)")]
+    [Range(0f, 1f)] public float relaxedCurl = 0.3f;
+    [Range(0f, 1f)] public float relaxedThumbCurl = 0.15f;
+    [Tooltip("How much a resting wrist straightens to follow the forearm (0 = keep the pose's bent-back wrist)")]
+    [Range(0f, 1f)] public float wristRelax = 0.85f;
 
     [Header("Walk Bob")]
     [Tooltip("Side-to-side sway cycles per meter walked; each cycle is two steps (left, right)")]
@@ -117,6 +122,12 @@ public class FirstPersonArms : MonoBehaviour
     private Transform rightShoulder;
     private Transform leftShoulder;
     private Transform leftHand;
+    private Transform leftForearm;
+    private Transform rightForearm;
+    private readonly List<Transform> leftFingerJoints = new List<Transform>();
+    private Quaternion[] leftClosedRotations;
+    private bool[] leftIsThumb;
+    private bool[] isThumb;
     private float currentReach; // how far the right arm is reaching for an item this frame (0-1)
     private Transform rightHand;
     private Transform palm;              // a point on the palm's surface; held items attach here
@@ -180,8 +191,14 @@ public class FirstPersonArms : MonoBehaviour
         leftShoulder = FindBone(arms, "Shoulder.L");
         leftHand = FindBone(arms, "Hand.L");
         rightHand = FindBone(rightArms, "Hand.L");
+        leftForearm = FindBone(arms, "Forearm.L");
+        rightForearm = FindBone(rightArms, "Forearm.L");
         FindFingers();
         MeasureHand();
+
+        CollectFingers(leftHand, leftFingerJoints, new List<int>(), new List<Transform>());
+        leftClosedRotations = ClosedRotations(arms, leftFingerJoints);
+        leftIsThumb = ThumbMask(leftFingerJoints);
 
         // Both arms stay in the relaxed idle pose, which carries items at a natural distance;
         // fingers are closed procedurally around whatever is held
@@ -255,24 +272,53 @@ public class FirstPersonArms : MonoBehaviour
     // Each finger is a chain of joints under the hand, ending in an "_end" bone at the fingertip
     void FindFingers()
     {
-        foreach (Transform child in rightHand)
+        CollectFingers(rightHand, fingerJoints, fingerStart, fingerTips);
+        isThumb = ThumbMask(fingerJoints);
+        curl = new float[fingerJoints.Count];
+        curlTarget = new float[fingerJoints.Count];
+    }
+
+    static void CollectFingers(Transform hand, List<Transform> joints, List<int> starts, List<Transform> tips)
+    {
+        foreach (Transform child in hand)
         {
             if (!child.name.StartsWith("Finger_"))
                 continue;
 
-            fingerStart.Add(fingerJoints.Count);
+            starts.Add(joints.Count);
             Transform joint = child;
             while (joint != null && !joint.name.EndsWith("_end"))
             {
-                fingerJoints.Add(joint);
+                joints.Add(joint);
                 joint = joint.childCount > 0 ? joint.GetChild(0) : null;
             }
-            fingerTips.Add(joint != null ? joint : fingerJoints[fingerJoints.Count - 1]);
+            tips.Add(joint != null ? joint : joints[joints.Count - 1]);
         }
-        fingerStart.Add(fingerJoints.Count); // sentinel: end of the last finger
+        starts.Add(joints.Count); // sentinel: end of the last finger
+    }
 
-        curl = new float[fingerJoints.Count];
-        curlTarget = new float[fingerJoints.Count];
+    // The thumb is the finger with three joints (Finger_5)
+    static bool[] ThumbMask(List<Transform> joints)
+    {
+        bool[] mask = new bool[joints.Count];
+        for (int i = 0; i < joints.Count; i++)
+            mask[i] = joints[i].name.StartsWith("Finger_5");
+        return mask;
+    }
+
+    // Finger rotations in the hold pose (a closed fist), sampled once on the given model
+    Quaternion[] ClosedRotations(Animator model, List<Transform> joints)
+    {
+        PlayableGraph graph = PlayableGraph.Create("FirstPersonArms measure");
+        AnimationPlayableOutput output = AnimationPlayableOutput.Create(graph, "Measure", model);
+        output.SetSourcePlayable(AnimationClipPlayable.Create(graph, holdPose));
+        graph.Evaluate(0f);
+
+        Quaternion[] closed = new Quaternion[joints.Count];
+        for (int i = 0; i < joints.Count; i++)
+            closed[i] = joints[i].localRotation;
+        graph.Destroy();
+        return closed;
     }
 
     // Poses the hand open (idle) and closed (hold pose) once, to learn the closed finger rotations,
@@ -367,6 +413,10 @@ public class FirstPersonArms : MonoBehaviour
         arms.transform.localPosition = modelOffset;
         arms.transform.localRotation = Quaternion.Euler(modelRotation);
         HangArm(arms.transform, leftShoulder, leftHand, -1f, 1f);
+        StraightenWrist(leftHand, leftForearm, 1f);
+        for (int i = 0; i < leftFingerJoints.Count; i++)
+            leftFingerJoints[i].localRotation = Quaternion.Slerp(leftFingerJoints[i].localRotation, leftClosedRotations[i],
+                leftIsThumb[i] ? relaxedThumbCurl : relaxedCurl);
 
         UpdateGrab(dt);
         UpdateFingers(dt);
@@ -421,7 +471,9 @@ public class FirstPersonArms : MonoBehaviour
         rightArms.transform.localRotation = Quaternion.Euler(modelRotation);
 
         // Empty hand hangs at your side; it swings up as it reaches and stays up while carrying
-        HangArm(rightArms.transform, rightShoulder, palm, 1f, (1f - holdWeight) * (1f - currentReach));
+        float resting = (1f - holdWeight) * (1f - currentReach);
+        HangArm(rightArms.transform, rightShoulder, palm, 1f, resting);
+        StraightenWrist(rightHand, rightForearm, resting);
 
         if (grabPhase == GrabPhase.None)
         {
@@ -578,6 +630,25 @@ public class FirstPersonArms : MonoBehaviour
         model.position = Vector3.Lerp(model.position, hungPosition, amount);
     }
 
+    // Bends the wrist so the hand carries on in the forearm's direction, like a relaxed hanging hand
+    // (the idle pose holds the hand bent back), blended in by `amount`
+    void StraightenWrist(Transform hand, Transform forearm, float amount)
+    {
+        if (amount <= 0f || forearm == null)
+            return;
+
+        Transform knuckle = null;
+        foreach (Transform child in hand)
+            if (child.name.StartsWith("Finger_3")) { knuckle = child.childCount > 0 ? child.GetChild(0) : child; break; }
+        if (knuckle == null)
+            return;
+
+        Vector3 handDirection = knuckle.position - hand.position;
+        Vector3 armDirection = hand.position - forearm.position;
+        Quaternion straighten = Quaternion.FromToRotation(handDirection, armDirection);
+        hand.rotation = Quaternion.Slerp(Quaternion.identity, straighten, amount * wristRelax) * hand.rotation;
+    }
+
     static float Ease(float t)
     {
         return Mathf.SmoothStep(0f, 1f, t);
@@ -593,8 +664,14 @@ public class FirstPersonArms : MonoBehaviour
             fingersSolvedFor = held;
             if (held != null)
                 SolveFingers(held);
-            else
-                System.Array.Clear(curlTarget, 0, curlTarget.Length);
+        }
+
+        // Not holding anything: open wide while reaching for an item, otherwise relaxed
+        if (held == null)
+        {
+            bool reaching = grabPhase == GrabPhase.Reach || grabPhase == GrabPhase.Pull;
+            for (int i = 0; i < curlTarget.Length; i++)
+                curlTarget[i] = reaching ? 0f : isThumb[i] ? relaxedThumbCurl : relaxedCurl;
         }
 
         for (int i = 0; i < fingerJoints.Count; i++)
