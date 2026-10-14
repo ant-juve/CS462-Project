@@ -52,9 +52,21 @@ public class FirstPersonArms : MonoBehaviour
     public float swayMax = 0.06f;
     public float swaySmooth = 8f;
 
+    [Header("Resting")]
+    [Tooltip("When empty, arms hang down at your sides from the body's shoulders. How far the shoulders are below eye level and out from the center, in meters")]
+    public float shoulderDrop = 0.25f;
+    public float shoulderWidth = 0.18f;
+    [Tooltip("How far out to the side and forward the hanging arms angle (per meter of arm)")]
+    public float hangOutward = 0.15f;
+    public float hangForward = 0.1f;
+
     [Header("Walk Bob")]
-    public float bobFrequency = 1.6f;   // steps per meter traveled
-    public Vector2 bobAmount = new Vector2(0.012f, 0.01f);
+    [Tooltip("Side-to-side sway cycles per meter walked; each cycle is two steps (left, right)")]
+    public float bobCyclesPerMeter = 0.35f;
+    [Tooltip("How far the arms sway side to side (x) and bounce up and down (y), in meters")]
+    public Vector2 bobSize = new Vector2(0.006f, 0.005f);
+    [Tooltip("How quickly the bob fades in when you start moving and out when you stop")]
+    public float bobFade = 3f;
     public float sprintBobMultiplier = 1.6f;
     public float sprintLower = 0.03f;
 
@@ -103,6 +115,9 @@ public class FirstPersonArms : MonoBehaviour
 
     // Right hand (the mirrored copy's .L bones)
     private Transform rightShoulder;
+    private Transform leftShoulder;
+    private Transform leftHand;
+    private float currentReach; // how far the right arm is reaching for an item this frame (0-1)
     private Transform rightHand;
     private Transform palm;              // a point on the palm's surface; held items attach here
     private Vector3 palmNormalLocal;     // in rightHand's local space
@@ -121,6 +136,7 @@ public class FirstPersonArms : MonoBehaviour
     private Vector3 swayPosition;
     private Quaternion lastCameraRotation;
     private float bobPhase;
+    private float bobStrength;
     private float smoothedLift;
     private float landTimer = 1f;
     private bool wasGrounded = true;
@@ -161,6 +177,8 @@ public class FirstPersonArms : MonoBehaviour
         SetUpModel(rightArms, -1f); // mirrored, so its left arm appears on the right
 
         rightShoulder = FindBone(rightArms, "Shoulder.L");
+        leftShoulder = FindBone(arms, "Shoulder.L");
+        leftHand = FindBone(arms, "Hand.L");
         rightHand = FindBone(rightArms, "Hand.L");
         FindFingers();
         MeasureHand();
@@ -346,6 +364,10 @@ public class FirstPersonArms : MonoBehaviour
         transform.localPosition = restPosition + offset;
         transform.localRotation = restRotation * Quaternion.Euler(-swayPosition.y * 100f, swayPosition.x * 100f, 0f);
 
+        arms.transform.localPosition = modelOffset;
+        arms.transform.localRotation = Quaternion.Euler(modelRotation);
+        HangArm(arms.transform, leftShoulder, leftHand, -1f, 1f);
+
         UpdateGrab(dt);
         UpdateFingers(dt);
     }
@@ -398,8 +420,14 @@ public class FirstPersonArms : MonoBehaviour
         rightArms.transform.localPosition = modelOffset + Quaternion.Inverse(transform.localRotation) * carryOffset * holdWeight;
         rightArms.transform.localRotation = Quaternion.Euler(modelRotation);
 
+        // Empty hand hangs at your side; it swings up as it reaches and stays up while carrying
+        HangArm(rightArms.transform, rightShoulder, palm, 1f, (1f - holdWeight) * (1f - currentReach));
+
         if (grabPhase == GrabPhase.None)
+        {
+            currentReach = 0f;
             return;
+        }
 
         grabTimer += dt;
         switch (grabPhase)
@@ -409,7 +437,8 @@ public class FirstPersonArms : MonoBehaviour
                 float t = Mathf.Clamp01(grabTimer / reachDuration);
                 ApplyBend(Ease(t));
                 reachTarget = GrabPoint(grabItem);
-                ReachToward(reachTarget, grabItem.WorldCenter, Ease(t));
+                currentReach = Ease(t);
+                ReachToward(reachTarget, grabItem.WorldCenter, currentReach);
 
                 if (t >= 1f)
                 {
@@ -431,6 +460,7 @@ public class FirstPersonArms : MonoBehaviour
             {
                 float t = Mathf.Clamp01(grabTimer / pullDuration);
                 ApplyBend(1f);
+                currentReach = 1f;
                 ReachToward(reachTarget, grabItem.WorldCenter, 1f);
 
                 // Measure from where the item started, against where the palm is now (it keeps moving
@@ -446,7 +476,8 @@ public class FirstPersonArms : MonoBehaviour
             {
                 float t = Mathf.Clamp01(grabTimer / returnDuration);
                 ApplyBend(1f - Ease(t));
-                ReachToward(reachTarget, reachTarget, 1f - Ease(t));
+                currentReach = 1f - Ease(t);
+                ReachToward(reachTarget, reachTarget, currentReach);
                 if (t >= 1f)
                 {
                     grabPhase = GrabPhase.None;
@@ -521,6 +552,30 @@ public class FirstPersonArms : MonoBehaviour
 
         float stretch = Mathf.Clamp(toTarget.magnitude - toPalm.magnitude, 0f, maxReach);
         model.position += toTarget.normalized * stretch * amount;
+    }
+
+    // Moves an arm so it hangs down at the player's side from the body's shoulder, blended in by
+    // `amount`. The arm models ride on the camera, so this uses the body (not the view) to decide
+    // where the shoulder is: looking down then shows the hands at your sides instead of in front.
+    // side: +1 for the right arm, -1 for the left
+    void HangArm(Transform model, Transform shoulder, Transform hand, float side, float amount)
+    {
+        if (amount <= 0f)
+            return;
+
+        Transform facing = body != null ? body.transform : cam;
+        Vector3 eye = cameraRoot != null ? cameraRoot.position : cam.position;
+        Vector3 bodyShoulder = eye - facing.up * shoulderDrop + facing.right * (side * shoulderWidth);
+
+        Vector3 shoulderPos = shoulder.position;
+        Vector3 toHand = hand.position - shoulderPos;
+        Vector3 hang = (-facing.up + facing.right * (side * hangOutward) + facing.forward * hangForward).normalized;
+        Quaternion swing = Quaternion.FromToRotation(toHand, hang);
+
+        Quaternion hungRotation = swing * model.rotation;
+        Vector3 hungPosition = bodyShoulder + swing * (model.position - shoulderPos);
+        model.rotation = Quaternion.Slerp(model.rotation, hungRotation, amount);
+        model.position = Vector3.Lerp(model.position, hungPosition, amount);
     }
 
     static float Ease(float t)
@@ -629,15 +684,17 @@ public class FirstPersonArms : MonoBehaviour
         bool sprinting = controller != null && speed > controller.MoveSpeed + 0.5f;
 
         if (grounded)
-            bobPhase += speed * bobFrequency * Mathf.PI * dt;
+            bobPhase += speed * bobCyclesPerMeter * 2f * Mathf.PI * dt;
 
-        float strength = grounded ? Mathf.Clamp01(speed / 4f) : 0f;
+        float target = grounded ? Mathf.Clamp01(speed / 4f) : 0f;
         if (sprinting)
-            strength *= sprintBobMultiplier;
+            target *= sprintBobMultiplier;
+        bobStrength = Mathf.MoveTowards(bobStrength, target, bobFade * dt);
 
+        // One side-to-side sway per two steps, one bounce per step
         return new Vector3(
-            Mathf.Sin(bobPhase) * bobAmount.x * strength,
-            -Mathf.Abs(Mathf.Cos(bobPhase)) * bobAmount.y * strength - (sprinting ? sprintLower : 0f),
+            Mathf.Sin(bobPhase) * bobSize.x * bobStrength,
+            -Mathf.Abs(Mathf.Cos(bobPhase)) * bobSize.y * bobStrength - (sprinting ? sprintLower * bobStrength : 0f),
             0f);
     }
 
