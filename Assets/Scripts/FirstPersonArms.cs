@@ -91,7 +91,7 @@ public class FirstPersonArms : MonoBehaviour
     [Tooltip("How much the forearms angle in toward the body while sprinting (per meter forward)")]
     public float runInward = 0.3f;
     [Tooltip("How much the fingers close into a loose fist while sprinting (0 = relaxed, 1 = fist)")]
-    [Range(0f, 1f)] public float runFistCurl = 0.6f;
+    [Range(0f, 1f)] public float runFistCurl = 1f;
     [Tooltip("How quickly the arms move into the running pose when you start sprinting and out when you stop")]
     public float runBlendSpeed = 4f;
 

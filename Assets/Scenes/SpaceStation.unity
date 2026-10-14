@@ -146432,10 +146432,6 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
-      propertyPath: m_Layer
-      value: 6
-      objectReference: {fileID: 0}
     - target: {fileID: 5393215578589016642, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       propertyPath: m_Layer
       value: 6
@@ -146451,6 +146447,10 @@ PrefabInstance:
     - target: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       propertyPath: m_Name
       value: PlayerCapsule
+      objectReference: {fileID: 0}
+    - target: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      propertyPath: m_Layer
+      value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 8997996947095583982, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       propertyPath: m_LocalPosition.x
@@ -146524,6 +146524,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FirstPersonPlayer
   bodyHeight: 2.1
   eyeHeight: 1.8
+--- !u!4 &1651165028 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 8997996947095583982, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+  m_PrefabInstance: {fileID: 1651165024}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &1652476398
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -154984,10 +154989,27 @@ MonoBehaviour:
   swayAmount: 0.02
   swayMax: 0.06
   swaySmooth: 8
-  bobFrequency: 1.6
-  bobAmount: {x: 0.012, y: 0.01}
+  shoulderDrop: 0.25
+  shoulderWidth: 0.2
+  hangOutward: 0.35
+  hangForward: -0.05
+  relaxedCurl: 0.3
+  relaxedThumbCurl: 0.15
+  wristRelax: 0.85
+  bobCyclesPerMeter: 0.35
+  bobSize: {x: 0.006, y: 0.005}
+  bobFade: 3
   sprintBobMultiplier: 1.6
   sprintLower: 0.03
+  sprintBlendSpeed: 3
+  swingCyclesPerMeter: 0.22
+  walkSwing: 8
+  runSwing: 40
+  runElbowBack: 65
+  runElbowForward: 105
+  runInward: 0.3
+  runFistCurl: 1
+  runBlendSpeed: 4
   breatheAmount: 0.004
   breatheSpeed: 1.3
   airOffsetPerSpeed: 0.006
@@ -188317,11 +188339,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!4 &1651165028 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 8997996947095583982, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
-  m_PrefabInstance: {fileID: 1651165024}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
