@@ -5,7 +5,8 @@ using UnityEngine.Animations;
 using UnityEngine.Playables;
 
 // First-person arms that hang off the camera. The model only has static poses, so all the
-// movement here is procedural: idle breathing, walk/sprint bob, look sway, jump/land,
+// movement here is procedural: idle breathing, walk/sprint bob, arm swing and a running pose,
+// look sway, jump/land,
 // a dip when switching hotbar slots, and a reach-out-and-grab when picking something up.
 //
 // Grabbing: the palm reaches to the nearest point on the item's surface with the wrist turned
@@ -77,6 +78,21 @@ public class FirstPersonArms : MonoBehaviour
     [Tooltip("How quickly the arms ease down when you start sprinting and back up when you stop")]
     public float sprintBlendSpeed = 3f;
 
+    [Header("Arm Swing")]
+    [Tooltip("How far empty arms swing forward and back from the shoulder while walking, in degrees")]
+    public float walkSwing = 8f;
+    [Tooltip("How far empty arms pump forward and back while sprinting, in degrees")]
+    public float runSwing = 40f;
+    [Tooltip("Elbow bend while sprinting, in degrees: with the arm swung back, and with it swung forward")]
+    public float runElbowBack = 65f;
+    public float runElbowForward = 105f;
+    [Tooltip("How much the forearms angle in toward the body while sprinting (per meter forward)")]
+    public float runInward = 0.3f;
+    [Tooltip("How much the fingers close into a loose fist while sprinting (0 = relaxed, 1 = fist)")]
+    [Range(0f, 1f)] public float runFistCurl = 0.6f;
+    [Tooltip("How quickly the arms move into the running pose when you start sprinting and out when you stop")]
+    public float runBlendSpeed = 4f;
+
     [Header("Idle Breathing")]
     public float breatheAmount = 0.004f;
     public float breatheSpeed = 1.3f;
@@ -126,6 +142,8 @@ public class FirstPersonArms : MonoBehaviour
     private Transform leftHand;
     private Transform leftForearm;
     private Transform rightForearm;
+    private Transform leftUpperArm;
+    private Transform rightUpperArm;
     private readonly List<Transform> leftFingerJoints = new List<Transform>();
     private Quaternion[] leftClosedRotations;
     private bool[] leftIsThumb;
@@ -151,6 +169,7 @@ public class FirstPersonArms : MonoBehaviour
     private float bobPhase;
     private float bobStrength;
     private float sprintWeight;
+    private float runWeight; // 0 = walking pose, 1 = running pose
     private float smoothedLift;
     private float landTimer = 1f;
     private bool wasGrounded = true;
@@ -196,6 +215,8 @@ public class FirstPersonArms : MonoBehaviour
         rightHand = FindBone(rightArms, "Hand.L");
         leftForearm = FindBone(arms, "Forearm.L");
         rightForearm = FindBone(rightArms, "Forearm.L");
+        leftUpperArm = FindBone(arms, "Shoulder_2.L");
+        rightUpperArm = FindBone(rightArms, "Shoulder_2.L");
         FindFingers();
         MeasureHand();
 
@@ -415,11 +436,12 @@ public class FirstPersonArms : MonoBehaviour
 
         arms.transform.localPosition = modelOffset;
         arms.transform.localRotation = Quaternion.Euler(modelRotation);
-        HangArm(arms.transform, leftShoulder, leftHand, -1f, 1f);
+        HangArm(arms.transform, leftShoulder, leftHand, -1f, 1f, ArmSwing(-1f));
+        BendElbow(leftUpperArm, leftForearm, leftHand, -1f, 1f);
         StraightenWrist(leftHand, leftForearm, 1f);
         for (int i = 0; i < leftFingerJoints.Count; i++)
             leftFingerJoints[i].localRotation = Quaternion.Slerp(leftFingerJoints[i].localRotation, leftClosedRotations[i],
-                leftIsThumb[i] ? relaxedThumbCurl : relaxedCurl);
+                RestingCurl(leftIsThumb[i]));
 
         UpdateGrab(dt);
         UpdateFingers(dt);
@@ -475,7 +497,8 @@ public class FirstPersonArms : MonoBehaviour
 
         // Empty hand hangs at your side; it swings up as it reaches and stays up while carrying
         float resting = (1f - holdWeight) * (1f - currentReach);
-        HangArm(rightArms.transform, rightShoulder, palm, 1f, resting);
+        HangArm(rightArms.transform, rightShoulder, palm, 1f, resting, ArmSwing(1f));
+        BendElbow(rightUpperArm, rightForearm, rightHand, 1f, resting);
         StraightenWrist(rightHand, rightForearm, resting);
 
         if (grabPhase == GrabPhase.None)
@@ -612,8 +635,8 @@ public class FirstPersonArms : MonoBehaviour
     // Moves an arm so it hangs down at the player's side from the body's shoulder, blended in by
     // `amount`. The arm models ride on the camera, so this uses the body (not the view) to decide
     // where the shoulder is: looking down then shows the hands at your sides instead of in front.
-    // side: +1 for the right arm, -1 for the left
-    void HangArm(Transform model, Transform shoulder, Transform hand, float side, float amount)
+    // side: +1 for the right arm, -1 for the left. swingAngle: degrees the arm is swung forward (negative = back)
+    void HangArm(Transform model, Transform shoulder, Transform hand, float side, float amount, float swingAngle)
     {
         if (amount <= 0f)
             return;
@@ -625,12 +648,52 @@ public class FirstPersonArms : MonoBehaviour
         Vector3 shoulderPos = shoulder.position;
         Vector3 toHand = hand.position - shoulderPos;
         Vector3 hang = (-facing.up + facing.right * (side * hangOutward) + facing.forward * hangForward).normalized;
+        hang = Quaternion.AngleAxis(-swingAngle, facing.right) * hang;
         Quaternion swing = Quaternion.FromToRotation(toHand, hang);
 
         Quaternion hungRotation = swing * model.rotation;
         Vector3 hungPosition = bodyShoulder + swing * (model.position - shoulderPos);
         model.rotation = Quaternion.Slerp(model.rotation, hungRotation, amount);
         model.position = Vector3.Lerp(model.position, hungPosition, amount);
+    }
+
+    // How far an empty arm is swung forward right now, in degrees. Arms swing opposite to each
+    // other and to the legs, one full swing per two steps
+    float ArmSwing(float side)
+    {
+        float amount = Mathf.Lerp(walkSwing * Mathf.Clamp01(bobStrength), runSwing, RunBlend);
+        return side * Mathf.Sin(bobPhase) * amount;
+    }
+
+    float RunBlend => Mathf.SmoothStep(0f, 1f, runWeight);
+
+    float RestingCurl(bool thumb)
+    {
+        float relaxed = thumb ? relaxedThumbCurl : relaxedCurl;
+        return Mathf.Lerp(relaxed, Mathf.Max(relaxed, runFistCurl), RunBlend);
+    }
+
+    // Bends the elbow up into a running arm: the forearm points forward and a little in toward the
+    // body, bending more as the arm swings forward. Blended in by `amount` and the running blend
+    void BendElbow(Transform upperArm, Transform forearm, Transform hand, float side, float amount)
+    {
+        float weight = amount * RunBlend;
+        if (weight <= 0f || upperArm == null || forearm == null)
+            return;
+
+        Transform facing = body != null ? body.transform : cam;
+        float forwardness = Mathf.InverseLerp(-runSwing, runSwing, ArmSwing(side));
+        float angle = Mathf.Lerp(runElbowBack, runElbowForward, forwardness);
+
+        Vector3 upper = forearm.position - upperArm.position;
+        Vector3 ahead = (facing.forward - facing.right * (side * runInward)).normalized;
+        float toAhead = Vector3.Angle(upper, ahead);
+        if (toAhead < 1f)
+            return;
+        Vector3 target = Quaternion.SlerpUnclamped(Quaternion.identity, Quaternion.FromToRotation(upper, ahead), angle / toAhead) * upper;
+
+        Quaternion bend = Quaternion.FromToRotation(hand.position - forearm.position, target);
+        forearm.rotation = Quaternion.Slerp(Quaternion.identity, bend, weight) * forearm.rotation;
     }
 
     // Bends the wrist so the hand carries on in the forearm's direction, like a relaxed hanging hand
@@ -674,7 +737,7 @@ public class FirstPersonArms : MonoBehaviour
         {
             bool reaching = grabPhase == GrabPhase.Reach || grabPhase == GrabPhase.Pull;
             for (int i = 0; i < curlTarget.Length; i++)
-                curlTarget[i] = reaching ? 0f : isThumb[i] ? relaxedThumbCurl : relaxedCurl;
+                curlTarget[i] = reaching ? 0f : RestingCurl(isThumb[i]);
         }
 
         for (int i = 0; i < fingerJoints.Count; i++)
@@ -771,6 +834,7 @@ public class FirstPersonArms : MonoBehaviour
             target *= sprintBobMultiplier;
         bobStrength = Mathf.MoveTowards(bobStrength, target, bobFade * dt);
         sprintWeight = Mathf.MoveTowards(sprintWeight, sprinting && grounded ? 1f : 0f, sprintBlendSpeed * dt);
+        runWeight = Mathf.MoveTowards(runWeight, sprinting ? 1f : 0f, runBlendSpeed * dt);
         float lower = sprintLower * Mathf.SmoothStep(0f, 1f, sprintWeight);
 
         // One side-to-side sway per two steps, one bounce per step
