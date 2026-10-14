@@ -82706,6 +82706,10 @@ PrefabInstance:
       propertyPath: Target.TrackingTarget
       value: 
       objectReference: {fileID: 1651165026}
+    - target: {fileID: 5192237344934759343, guid: 9c489a8547f4d9e4387da15a4ff82c81, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 8762286023885395077, guid: 9c489a8547f4d9e4387da15a4ff82c81, type: 3}
       propertyPath: m_Name
       value: PlayerFollowCamera
@@ -146441,8 +146445,24 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8616685848737228371, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      propertyPath: Gravity
+      value: -18
+      objectReference: {fileID: 0}
+    - target: {fileID: 8616685848737228371, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      propertyPath: MoveSpeed
+      value: 2.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8616685848737228371, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      propertyPath: JumpHeight
+      value: 0.6
+      objectReference: {fileID: 0}
+    - target: {fileID: 8616685848737228371, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       propertyPath: RotationSpeed
       value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 8616685848737228371, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      propertyPath: SpeedChangeRate
+      value: 5
       objectReference: {fileID: 0}
     - target: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       propertyPath: m_Name
@@ -146499,6 +146519,15 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1651165027}
+    - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1651165034}
+    - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1651165035}
+    - targetCorrespondingSourceObject: {fileID: 8616685848737228372, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1651165036}
   m_SourcePrefab: {fileID: 100100000, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
 --- !u!1 &1651165025 stripped
 GameObject:
@@ -146529,6 +146558,86 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 8997996947095583982, guid: c5efc39a8aaf6e64ea40e9ad573e9b47, type: 3}
   m_PrefabInstance: {fileID: 1651165024}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &1651165034
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651165025}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d95c3b98ca7204c25892c5b8aee50927, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FirstPersonBody
+  model: {fileID: 919132149155446097, guid: fc8ccc6aabeed46f8a349678eb240773, type: 3}
+  idle: {fileID: 7400000, guid: 4e3aa9746b64d426fa8d9669ae21275d, type: 2}
+  walk: {fileID: 7400000, guid: 27a0228e200fd4f789ad87ac3dec701e, type: 2}
+  run: {fileID: 7400000, guid: ce2fd6bf43fe844319250ff8076e6811, type: 2}
+  strafeLeft: {fileID: 7400000, guid: cf26d83c0bfec4ac9853e03a4f890f27, type: 2}
+  strafeRight: {fileID: 7400000, guid: baf7c8c0dc97e433ea1874ef5af4be5e, type: 2}
+  jump: {fileID: 7400000, guid: 67e2233c2ddd942b5b6e5d9070a1f777, type: 2}
+  walkClipSpeed: 1.53
+  runClipSpeed: 3.57
+  strafeClipSpeed: 1.6
+  bodyBack: 0.12
+  lookDownForward: 0.2
+  eyeAboveHead: 0.05
+  turnThreshold: 50
+  turnSpeed: 280
+  blendSmoothing: 8
+  airBlendSpeed: 6
+--- !u!114 &1651165035
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651165025}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a396c04c11444764ab575f4f3544cc7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FirstPersonFootsteps
+  steps:
+  - {fileID: 8300000, guid: a9dd59522fb744aad86a3c3f1f4b131f, type: 3}
+  - {fileID: 8300000, guid: 8d6a9065b21524be6942ef0d9824aca3, type: 3}
+  - {fileID: 8300000, guid: 49a6b10ecd35d4161ae2482b4a721eec, type: 3}
+  - {fileID: 8300000, guid: 85b0cfdd9406a4124a686777c4b5e4de, type: 3}
+  - {fileID: 8300000, guid: 85d2a4fe9b0a44a6db952522a3016fa7, type: 3}
+  - {fileID: 8300000, guid: d1796237897a449289c8368f41516523, type: 3}
+  - {fileID: 8300000, guid: 2ad68a5abef8640f28ccd36a50bf2359, type: 3}
+  - {fileID: 8300000, guid: 4e503be2eb3044200888ed216a9c7055, type: 3}
+  landings:
+  - {fileID: 8300000, guid: 01e7707d35a2d476ebc0cc3c60a97741, type: 3}
+  - {fileID: 8300000, guid: 954ad50003867428d92c139efbe3cdda, type: 3}
+  walkVolume: 0.3
+  sprintVolume: 0.55
+  pitchVariation: 0.07
+  volumeVariation: 0.15
+  softLandingSpeed: 4
+--- !u!114 &1651165036
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651165025}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cd1c091d1a20b427cb01e7716c0fe811, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SlipProbe
+  dir: 0
+  t: 0
+  input: {fileID: 0}
+  body: {fileID: 0}
+  lastL: {x: 0, y: 0, z: 0}
+  lastR: {x: 0, y: 0, z: 0}
+  slip: 0
+  frames: 0
+  started: 0
+  floor: 3.4028235e+38
 --- !u!1001 &1652476398
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -154996,7 +155105,6 @@ MonoBehaviour:
   relaxedCurl: 0.3
   relaxedThumbCurl: 0.15
   wristRelax: 0.85
-  bobCyclesPerMeter: 0.35
   bobSize: {x: 0.006, y: 0.005}
   bobFade: 3
   sprintBobMultiplier: 1.6
@@ -155010,6 +155118,22 @@ MonoBehaviour:
   runInward: 0.3
   runFistCurl: 1
   runBlendSpeed: 4
+  headBobWalk: {x: 0.004, y: 0.01, z: 0.005}
+  headBobRun: {x: 0.006, y: 0.015, z: 0.008}
+  headTiltWalk: {x: 0.3, y: 0.1}
+  headTiltRun: {x: 0.5, y: 0.15}
+  heelStrike: 0.25
+  landImpact: 0.35
+  maxLandImpact: 2.5
+  takeoffKick: 0.35
+  landNod: 25
+  minAirTime: 0.15
+  kneeStiffness: 180
+  kneeDamping: 16
+  leanPerAcceleration: 0.3
+  maxHeadLean: 3
+  leanStiffness: 60
+  leanDamping: 9
   breatheAmount: 0.004
   breatheSpeed: 1.3
   airOffsetPerSpeed: 0.006

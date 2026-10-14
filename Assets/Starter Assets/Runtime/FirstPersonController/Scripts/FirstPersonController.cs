@@ -26,6 +26,8 @@ namespace StarterAssets
 		public float JumpHeight = 1.2f;
 		[Tooltip("The character uses its own gravity value. The engine default is -9.81f")]
 		public float Gravity = -15.0f;
+		[Tooltip("Gravity is multiplied by this while falling, so you come down faster than you go up. Above 1 takes the floaty hang out of jumps")]
+		public float FallGravityMultiplier = 1.5f;
 
 		[Space(10)]
 		[Tooltip("Time required to pass before being able to jump again. Set to 0f to instantly jump again")]
@@ -53,6 +55,12 @@ namespace StarterAssets
 
 		// cinemachine
 		private float _cinemachineTargetPitch;
+
+		// Look pitch in degrees (positive = down), for scripts that add their own camera motion on top
+		public float CameraPitch => _cinemachineTargetPitch;
+		// Extra pitch (x) and roll (y) in degrees that other scripts add on top of the look, e.g. head bob.
+		// Applied here, every frame, so the camera target only has one writer.
+		[System.NonSerialized] public Vector2 CameraTilt;
 
 		// player
 		private float _speed;
@@ -143,12 +151,12 @@ namespace StarterAssets
 				// clamp our pitch rotation
 				_cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
 
-				// Update Cinemachine camera target pitch
-				CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch, 0.0f, 0.0f);
-
 				// rotate the player left and right
 				transform.Rotate(Vector3.up * _rotationVelocity);
 			}
+
+			// Update Cinemachine camera target pitch (every frame, so added tilt stays smooth)
+			CinemachineCameraTarget.transform.localRotation = Quaternion.Euler(_cinemachineTargetPitch + CameraTilt.x, 0.0f, CameraTilt.y);
 		}
 
 		private void Move()
@@ -242,7 +250,8 @@ namespace StarterAssets
 			// apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
 			if (_verticalVelocity < _terminalVelocity)
 			{
-				_verticalVelocity += Gravity * Time.deltaTime;
+				float gravity = _verticalVelocity < 0.0f ? Gravity * FallGravityMultiplier : Gravity;
+				_verticalVelocity += gravity * Time.deltaTime;
 			}
 		}
 

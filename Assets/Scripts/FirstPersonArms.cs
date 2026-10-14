@@ -17,11 +17,12 @@ using UnityEngine.Playables;
 // the first-person view. The right arm on screen is a mirrored copy of the left arm,
 // made at runtime.
 //
-// Hierarchy (made by Tools > Set Up First Person Arms):
+// Hierarchy:
 //   MainCamera
 //     ArmsPivot      <- this component; procedural motion moves this
 //       FPS_Female_Arms (model, with Animator; shows the left arm)
 //       FPS_Female_Arms (Right)  <- mirrored copy made at runtime; shows the right arm
+[DefaultExecutionOrder(100)] // after the camera has moved for this frame, so the arms are placed against it
 public class FirstPersonArms : MonoBehaviour
 {
     [Header("Model")]
@@ -94,10 +95,39 @@ public class FirstPersonArms : MonoBehaviour
     public float runBlendSpeed = 4f;
 
     [Header("Head Bob")]
-    [Tooltip("How far the view sways side to side (x) and dips (y) with each step while walking, in meters")]
-    public Vector2 headBobWalk = new Vector2(0.004f, 0.008f);
+    [Tooltip("How far the view sways side to side (x), dips (y) and surges forward and back (z) with each step while walking, in meters")]
+    public Vector3 headBobWalk = new Vector3(0.004f, 0.01f, 0.005f);
     [Tooltip("The same while sprinting")]
-    public Vector2 headBobRun = new Vector2(0.007f, 0.016f);
+    public Vector3 headBobRun = new Vector3(0.006f, 0.015f, 0.008f);
+    [Tooltip("How far the head nods down as each foot lands (x) and tilts toward the planted foot (y), in degrees, walking and sprinting. Keep the tilt small: your eyes keep the horizon level, so a tilting view reads as a crooked head")]
+    public Vector2 headTiltWalk = new Vector2(0.3f, 0.1f);
+    public Vector2 headTiltRun = new Vector2(0.5f, 0.15f);
+    [Tooltip("Extra quick dip right as the heel hits, as a fraction of the step dip")]
+    public float heelStrike = 0.25f;
+
+    [Header("Jump / Land (head)")]
+    [Tooltip("How hard the head drops when landing, per m/s of falling speed (the knees soak up the landing)")]
+    public float landImpact = 0.35f;
+    [Tooltip("Strongest landing drop, as a downward speed given to the head, in m/s")]
+    public float maxLandImpact = 2.5f;
+    [Tooltip("The head lags a little behind as the legs push off, in m/s")]
+    public float takeoffKick = 0.35f;
+    [Tooltip("How far the head nods forward per meter it drops")]
+    public float landNod = 25f;
+    [Tooltip("Ignore landings after less time than this in the air, e.g. stepping off a stair, in seconds")]
+    public float minAirTime = 0.15f;
+    [Tooltip("Springiness of the knees: higher bounces back faster")]
+    public float kneeStiffness = 180f;
+    public float kneeDamping = 16f;
+
+    [Header("Start / Stop Lean")]
+    [Tooltip("How far the head leans per m/s² of speeding up (forward) or slowing down (back), in degrees")]
+    public float leanPerAcceleration = 0.3f;
+    public float maxHeadLean = 3f;
+    [Tooltip("How springy the lean is: higher settles faster")]
+    public float leanStiffness = 60f;
+    [Tooltip("How quickly the lean's wobble dies out")]
+    public float leanDamping = 9f;
 
     [Header("Idle Breathing")]
     public float breatheAmount = 0.004f;
@@ -132,14 +162,15 @@ public class FirstPersonArms : MonoBehaviour
     private Hotbar hotbar;
     private CharacterController body;
     private FirstPersonController controller;
+    private FirstPersonBody fullBody; // optional: the visible body, whose shoulders and stride the arms follow
     private Transform cam;
     private Transform cameraRoot;
     private Vector3 cameraRootRest;
     private Vector3 bend; // how far the view dips/leans for the current grab (local to the player)
 
     private Animator rightArms;
-    private PlayableGraph leftGraph;
-    private PlayableGraph rightGraph;
+    private Transform leftModel;  // cached transforms of the two arm models
+    private Transform rightModel;
     private float holdWeight;
 
     // Right hand (the mirrored copy's .L bones)
@@ -150,6 +181,13 @@ public class FirstPersonArms : MonoBehaviour
     private Transform rightForearm;
     private Transform leftUpperArm;
     private Transform rightUpperArm;
+    private Transform leftKnuckle;   // middle finger's first knuckle: which way the hand points
+    private Transform rightKnuckle;
+
+    // The arms hold a still pose, sampled once. Each frame only the bones the code moves are put
+    // back to it, instead of re-running an animation over the whole skeleton.
+    private Transform[] posedBones;
+    private Quaternion[] posedRotations;
     private readonly List<Transform> leftFingerJoints = new List<Transform>();
     private Quaternion[] leftClosedRotations;
     private bool[] leftIsThumb;
@@ -173,7 +211,25 @@ public class FirstPersonArms : MonoBehaviour
     private Vector3 swayPosition;
     private Quaternion lastCameraRotation;
     private float bendAmount; // how far into the current grab's bend the view is (0-1)
+    private Vector3 lastVelocity;     // player-local, for the start/stop lean
+    private Vector3 acceleration;
+    private Vector2 lean;             // pitch (x) and roll (y), degrees
+    private Vector2 leanVelocity;
+    private float knee;          // how far the head has dropped from bent knees, in meters (negative = down)
+    private float kneeVelocity;
+    private bool headGrounded = true;
+    private float airTime;
+    private float fallSpeed;     // downward speed just before landing
     private float swingPhase;
+
+    // Worked out once per frame and shared by everything that needs them
+    private Vector3 velocity;     // the player's, world space
+    private bool hasBody;         // fullBody is present and running
+    private float runBlend;       // eased runWeight
+    private float leftSwing;      // degrees each arm is swung forward
+    private float rightSwing;
+    private float restingCurl;    // how far resting fingers (and thumbs) curl
+    private float restingThumbCurl;
     private float bobStrength;
     private float sprintWeight;
     private float runWeight; // 0 = walking pose, 1 = running pose
@@ -204,6 +260,9 @@ public class FirstPersonArms : MonoBehaviour
             hotbar = player.GetComponent<Hotbar>();
             body = player.GetComponent<CharacterController>();
             controller = player.GetComponent<FirstPersonController>();
+            fullBody = player.GetComponent<FirstPersonBody>();
+            if (fullBody != null && !fullBody.isActiveAndEnabled)
+                fullBody = null;
             if (controller != null && controller.CinemachineCameraTarget != null)
             {
                 cameraRoot = controller.CinemachineCameraTarget.transform;
@@ -233,8 +292,13 @@ public class FirstPersonArms : MonoBehaviour
 
         // Both arms stay in the relaxed idle pose, which carries items at a natural distance;
         // fingers are closed procedurally around whatever is held
-        leftGraph = PlayPose(arms, idlePose);
-        rightGraph = PlayPose(rightArms, idlePose);
+        SamplePose(arms, idlePose);
+        SamplePose(rightArms, idlePose);
+        leftModel = arms.transform;
+        rightModel = rightArms.transform;
+        leftKnuckle = Knuckle(leftHand);
+        rightKnuckle = Knuckle(rightHand);
+        RecordPosedBones();
 
         if (hotbar != null)
         {
@@ -246,10 +310,6 @@ public class FirstPersonArms : MonoBehaviour
 
     void OnDestroy()
     {
-        if (leftGraph.IsValid())
-            leftGraph.Destroy();
-        if (rightGraph.IsValid())
-            rightGraph.Destroy();
         if (hotbar != null && hotbar.GrabAnimation == (System.Action<PickupItem, System.Action>)PlayGrab)
             hotbar.GrabAnimation = null;
     }
@@ -267,7 +327,12 @@ public class FirstPersonArms : MonoBehaviour
         {
             r.enabled = !IsSkinnedToRightArm(r);
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; // floating arms shouldn't cast shadows
-            r.updateWhenOffscreen = true; // bounds don't follow the camera-parented pose otherwise
+            // The mesh's own bounds don't follow the camera-parented pose, so give it a fixed box
+            // around the arms (cheaper than recomputing the bounds from the bones every frame)
+            Transform space = r.rootBone != null ? r.rootBone : r.transform;
+            float toLocal = 1f / Mathf.Max(0.0001f, Mathf.Abs(space.lossyScale.x));
+            r.localBounds = new Bounds(space.InverseTransformPoint(model.transform.parent.position), Vector3.one * 3f * toLocal);
+            r.updateWhenOffscreen = false;
         }
     }
 
@@ -410,15 +475,43 @@ public class FirstPersonArms : MonoBehaviour
         return sum / Mathf.Max(1, fingerTips.Count);
     }
 
-    PlayableGraph PlayPose(Animator model, AnimationClip pose)
+    // Poses the model once; nothing animates it after this
+    static void SamplePose(Animator model, AnimationClip pose)
     {
-        PlayableGraph graph = PlayableGraph.Create("FirstPersonArms " + model.name);
-        graph.SetTimeUpdateMode(DirectorUpdateMode.GameTime);
-
+        PlayableGraph graph = PlayableGraph.Create("FirstPersonArms pose");
         AnimationPlayableOutput output = AnimationPlayableOutput.Create(graph, "Arms", model);
         output.SetSourcePlayable(AnimationClipPlayable.Create(graph, pose));
-        graph.Play();
-        return graph;
+        graph.Evaluate(0f);
+        graph.Destroy();
+    }
+
+    // Remembers the posed rotation of every bone the code moves each frame
+    void RecordPosedBones()
+    {
+        var bones = new List<Transform> { leftForearm, leftHand, rightForearm, rightHand };
+        bones.AddRange(leftFingerJoints);
+        bones.AddRange(fingerJoints);
+        bones.RemoveAll(b => b == null);
+        posedBones = bones.ToArray();
+        posedRotations = new Quaternion[posedBones.Length];
+        for (int i = 0; i < posedBones.Length; i++)
+            posedRotations[i] = posedBones[i].localRotation;
+    }
+
+    void ResetPosedBones()
+    {
+        for (int i = 0; i < posedBones.Length; i++)
+            posedBones[i].localRotation = posedRotations[i];
+    }
+
+    static Transform Knuckle(Transform hand)
+    {
+        if (hand == null)
+            return null;
+        foreach (Transform child in hand)
+            if (child.name.StartsWith("Finger_3"))
+                return child.childCount > 0 ? child.GetChild(0) : child;
+        return null;
     }
 
     // ---------- Per frame ----------
@@ -428,8 +521,13 @@ public class FirstPersonArms : MonoBehaviour
         float dt = Time.deltaTime;
         if (dt <= 0f)
             return; // paused
+        if (posedBones == null)
+            return; // scripts were recompiled during Play mode and the setup was lost; restart Play mode
 
+        velocity = body != null ? body.velocity : Vector3.zero;
+        hasBody = fullBody != null && fullBody.IsReady;
         UpdateCarryBlend(dt);
+        ResetPosedBones();
 
         Vector3 offset = Vector3.zero;
         offset += LookSway(dt);
@@ -438,23 +536,30 @@ public class FirstPersonArms : MonoBehaviour
         offset += JumpAndLand(dt);
         offset += SwitchDip(dt);
 
+        // WalkBob just updated the gait; work out what the arms share from it
+        runBlend = Mathf.SmoothStep(0f, 1f, runWeight);
+        float swing = Mathf.Sin(swingPhase) * Mathf.Lerp(walkSwing * Mathf.Clamp01(bobStrength), runSwing, runBlend);
+        leftSwing = -swing;
+        rightSwing = swing;
+        restingCurl = Mathf.Lerp(relaxedCurl, Mathf.Max(relaxedCurl, runFistCurl), runBlend);
+        restingThumbCurl = Mathf.Lerp(relaxedThumbCurl, Mathf.Max(relaxedThumbCurl, runFistCurl), runBlend);
+
         transform.localPosition = restPosition + offset;
         transform.localRotation = restRotation * Quaternion.Euler(-swayPosition.y * 100f, swayPosition.x * 100f, 0f);
 
-        arms.transform.localPosition = modelOffset;
-        arms.transform.localRotation = Quaternion.Euler(modelRotation);
-        HangArm(arms.transform, leftShoulder, leftHand, -1f, 1f, ArmSwing(-1f));
-        BendElbow(leftUpperArm, leftForearm, leftHand, -1f, 1f);
-        StraightenWrist(leftHand, leftForearm, 1f);
+        leftModel.localPosition = modelOffset;
+        leftModel.localRotation = Quaternion.Euler(modelRotation);
+        HangArm(leftModel, leftShoulder, leftHand, -1f, 1f, leftSwing);
+        BendElbow(leftUpperArm, leftForearm, leftHand, -1f, 1f, leftSwing);
+        StraightenWrist(leftHand, leftForearm, leftKnuckle, 1f);
         for (int i = 0; i < leftFingerJoints.Count; i++)
             leftFingerJoints[i].localRotation = Quaternion.Slerp(leftFingerJoints[i].localRotation, leftClosedRotations[i],
-                RestingCurl(leftIsThumb[i]));
+                leftIsThumb[i] ? restingThumbCurl : restingCurl);
 
         UpdateGrab(dt);
         UpdateFingers(dt);
 
-        if (cameraRoot != null)
-            cameraRoot.localPosition = cameraRootRest + bend * bendAmount + HeadBob();
+        UpdateHead(dt);
     }
 
     PickupItem HeldItem => grabPhase != GrabPhase.Reach && grabPhase != GrabPhase.Pull && hotbar != null ? hotbar.SelectedItem : null;
@@ -501,14 +606,14 @@ public class FirstPersonArms : MonoBehaviour
     void UpdateGrab(float dt)
     {
         // Start from the arm's normal pose each frame, then bend it toward the item
-        rightArms.transform.localPosition = modelOffset + Quaternion.Inverse(transform.localRotation) * carryOffset * holdWeight;
-        rightArms.transform.localRotation = Quaternion.Euler(modelRotation);
+        rightModel.localPosition = modelOffset + Quaternion.Inverse(transform.localRotation) * carryOffset * holdWeight;
+        rightModel.localRotation = Quaternion.Euler(modelRotation);
 
         // Empty hand hangs at your side; it swings up as it reaches and stays up while carrying
         float resting = (1f - holdWeight) * (1f - currentReach);
-        HangArm(rightArms.transform, rightShoulder, palm, 1f, resting, ArmSwing(1f));
-        BendElbow(rightUpperArm, rightForearm, rightHand, 1f, resting);
-        StraightenWrist(rightHand, rightForearm, resting);
+        HangArm(rightModel, rightShoulder, palm, 1f, resting, rightSwing);
+        BendElbow(rightUpperArm, rightForearm, rightHand, 1f, resting, rightSwing);
+        StraightenWrist(rightHand, rightForearm, rightKnuckle, resting);
 
         if (grabPhase == GrabPhase.None)
         {
@@ -628,7 +733,7 @@ public class FirstPersonArms : MonoBehaviour
             rightHand.rotation = Quaternion.Slerp(Quaternion.identity, turn, amount * wristAlign) * rightHand.rotation;
         }
 
-        Transform model = rightArms.transform;
+        Transform model = rightModel;
         Vector3 shoulder = rightShoulder.position;
         Vector3 toPalm = palm.position - shoulder;
         Vector3 toTarget = target - shoulder;
@@ -650,9 +755,11 @@ public class FirstPersonArms : MonoBehaviour
         if (amount <= 0f)
             return;
 
-        Transform facing = body != null ? body.transform : cam;
+        Transform facing = hasBody ? fullBody.Torso : body != null ? body.transform : cam;
         Vector3 eye = cameraRoot != null ? cameraRoot.position : cam.position;
-        Vector3 bodyShoulder = eye - facing.up * shoulderDrop + facing.right * (side * shoulderWidth);
+        Vector3 bodyShoulder = hasBody
+            ? fullBody.ShoulderPosition(side)
+            : eye - facing.up * shoulderDrop + facing.right * (side * shoulderWidth);
 
         Vector3 shoulderPos = shoulder.position;
         Vector3 toHand = hand.position - shoulderPos;
@@ -666,32 +773,17 @@ public class FirstPersonArms : MonoBehaviour
         model.position = Vector3.Lerp(model.position, hungPosition, amount);
     }
 
-    // How far an empty arm is swung forward right now, in degrees. Arms swing opposite to each
-    // other, at their own pace (swingCyclesPerMeter)
-    float ArmSwing(float side)
-    {
-        float amount = Mathf.Lerp(walkSwing * Mathf.Clamp01(bobStrength), runSwing, RunBlend);
-        return side * Mathf.Sin(swingPhase) * amount;
-    }
-
-    float RunBlend => Mathf.SmoothStep(0f, 1f, runWeight);
-
-    float RestingCurl(bool thumb)
-    {
-        float relaxed = thumb ? relaxedThumbCurl : relaxedCurl;
-        return Mathf.Lerp(relaxed, Mathf.Max(relaxed, runFistCurl), RunBlend);
-    }
-
     // Bends the elbow up into a running arm: the forearm points forward and a little in toward the
     // body, bending more as the arm swings forward. Blended in by `amount` and the running blend
-    void BendElbow(Transform upperArm, Transform forearm, Transform hand, float side, float amount)
+    // swingAngle: how far this arm is swung forward right now, in degrees
+    void BendElbow(Transform upperArm, Transform forearm, Transform hand, float side, float amount, float swingAngle)
     {
-        float weight = amount * RunBlend;
+        float weight = amount * runBlend;
         if (weight <= 0f || upperArm == null || forearm == null)
             return;
 
-        Transform facing = body != null ? body.transform : cam;
-        float forwardness = Mathf.InverseLerp(-runSwing, runSwing, ArmSwing(side));
+        Transform facing = hasBody ? fullBody.Torso : body != null ? body.transform : cam;
+        float forwardness = Mathf.InverseLerp(-runSwing, runSwing, swingAngle);
         float angle = Mathf.Lerp(runElbowBack, runElbowForward, forwardness);
 
         Vector3 upper = forearm.position - upperArm.position;
@@ -707,15 +799,9 @@ public class FirstPersonArms : MonoBehaviour
 
     // Bends the wrist so the hand carries on in the forearm's direction, like a relaxed hanging hand
     // (the idle pose holds the hand bent back), blended in by `amount`
-    void StraightenWrist(Transform hand, Transform forearm, float amount)
+    void StraightenWrist(Transform hand, Transform forearm, Transform knuckle, float amount)
     {
-        if (amount <= 0f || forearm == null)
-            return;
-
-        Transform knuckle = null;
-        foreach (Transform child in hand)
-            if (child.name.StartsWith("Finger_3")) { knuckle = child.childCount > 0 ? child.GetChild(0) : child; break; }
-        if (knuckle == null)
+        if (amount <= 0f || forearm == null || knuckle == null)
             return;
 
         Vector3 handDirection = knuckle.position - hand.position;
@@ -746,7 +832,7 @@ public class FirstPersonArms : MonoBehaviour
         {
             bool reaching = grabPhase == GrabPhase.Reach || grabPhase == GrabPhase.Pull;
             for (int i = 0; i < curlTarget.Length; i++)
-                curlTarget[i] = reaching ? 0f : RestingCurl(isThumb[i]);
+                curlTarget[i] = reaching ? 0f : isThumb[i] ? restingThumbCurl : restingCurl;
         }
 
         for (int i = 0; i < fingerJoints.Count; i++)
@@ -830,17 +916,22 @@ public class FirstPersonArms : MonoBehaviour
         if (body == null)
             return Vector3.zero;
 
-        Vector3 velocity = body.velocity;
         float speed = new Vector3(velocity.x, 0f, velocity.z).magnitude;
         bool grounded = controller == null || controller.Grounded;
         bool sprinting = controller != null && speed > controller.MoveSpeed + 0.5f;
 
-        if (grounded)
+        if (hasBody)
+        {
+            // Follow the legs: the left foot lands at stride 0, when the right arm is furthest forward
+            swingPhase = fullBody.StridePhase * 2f * Mathf.PI + Mathf.PI * 0.5f;
+        }
+        else if (grounded)
         {
             swingPhase += speed * swingCyclesPerMeter * 2f * Mathf.PI * dt;
         }
 
-        float target = grounded ? Mathf.Clamp01(speed / 4f) : 0f;
+        float walkSpeed = controller != null ? controller.MoveSpeed : 4f;
+        float target = grounded ? Mathf.Clamp01(speed / walkSpeed) : 0f;
         if (sprinting)
             target *= sprintBobMultiplier;
         bobStrength = Mathf.MoveTowards(bobStrength, target, bobFade * dt);
@@ -856,16 +947,120 @@ public class FirstPersonArms : MonoBehaviour
             0f);
     }
 
-    // The head dips a little as each foot lands and shifts over the planted foot, in step with the
-    // arm swing: when the right arm is forward the left foot is down, so the head leans left.
-    // Local to the player, applied to the camera's target.
-    Vector3 HeadBob()
+    // Moves and turns the camera's target with each step, plus a lean when speeding up or slowing down.
+    // Steps follow the arm swing (and the legs): a foot lands whenever an arm is at the end of its
+    // swing, and when the right arm is forward the left foot is down.
+    void UpdateHead(float dt)
     {
-        Vector2 size = Vector2.Lerp(headBobWalk, headBobRun, RunBlend) * Mathf.Clamp01(bobStrength);
-        return new Vector3(
-            -Mathf.Sin(swingPhase) * size.x,
-            Mathf.Cos(2f * swingPhase) * 0.5f * size.y, // low at each footfall, high mid-stride
-            0f);
+        if (cameraRoot == null)
+            return;
+
+        float strength = Mathf.Clamp01(bobStrength);
+        Vector3 size = Vector3.Lerp(headBobWalk, headBobRun, runBlend) * strength;
+        Vector2 tilt = Vector2.Lerp(headTiltWalk, headTiltRun, runBlend) * strength;
+
+        // 0 as a foot lands, 1 as the next one does
+        float step = Mathf.Repeat((swingPhase - Mathf.PI * 0.5f) / Mathf.PI, 1f);
+        float height = StepHeight(step);
+        float side = Mathf.Sin(swingPhase); // +1 when the left foot is planted
+
+        Vector3 bob = new Vector3(
+            -side * size.x,                          // over the planted foot
+            height * 0.5f * size.y,
+            -Mathf.Sin(step * 2f * Mathf.PI) * size.z); // slowest as the foot lands, fastest pushing off
+        float nod = -height * 0.5f * tilt.x;          // head drops forward a little with each landing
+        float roll = side * tilt.y;                   // tilts toward the planted foot
+
+        UpdateLean(dt);
+        UpdateKnees(dt);
+        Vector3 leanShift = new Vector3(0f, 0f, lean.x * 0.006f); // leaning forward carries the head forward
+        bob.y += knee;
+        nod -= knee * landNod;
+
+        Vector3 lookDown = hasBody ? new Vector3(0f, 0f, fullBody.LookDownShift) : Vector3.zero;
+        cameraRoot.localPosition = cameraRootRest + bend * bendAmount + bob + leanShift + lookDown;
+        if (controller != null)
+            controller.CameraTilt = new Vector2(nod + lean.x, roll + lean.y); // the controller applies it
+    }
+
+    // Head height through one step, from -1 (lowest) to 1 (highest), with 0 the moment a foot lands.
+    // Real steps aren't a smooth wave: the head falls faster and faster into the landing, jolts down a
+    // little more as the heel hits, then rises smoothly over the planted leg.
+    float StepHeight(float step)
+    {
+        const float lowest = 0.06f, highest = 0.55f;
+        float h;
+        if (step >= lowest && step < highest)
+            h = Mathf.Lerp(-1f, 1f, Mathf.SmoothStep(0f, 1f, (step - lowest) / (highest - lowest)));
+        else
+        {
+            // falling: from the top, through the landing at 0, to the bottom just after
+            float t = Mathf.Repeat(step - highest, 1f) / (1f - highest + lowest);
+            h = 1f - 2f * t * t;
+        }
+
+        float jolt = step / 0.04f;
+        h -= heelStrike * 2f * jolt * Mathf.Exp(1f - jolt) * (step < 0.3f ? 1f : 0f);
+        return Mathf.Max(h, -1.5f);
+    }
+
+    // Landing bends the knees: the head drops (more for harder landings) and springs back up, with a
+    // small forward nod. Pushing off for a jump leaves the head a little behind as the legs extend.
+    void UpdateKnees(float dt)
+    {
+        bool grounded = controller == null || controller.Grounded;
+        if (!grounded)
+        {
+            airTime += dt;
+            fallSpeed = Mathf.Max(0f, -velocity.y);
+            if (headGrounded && velocity.y > 1f)
+                kneeVelocity -= takeoffKick; // jumped
+        }
+        else if (!headGrounded && airTime >= minAirTime)
+        {
+            kneeVelocity -= Mathf.Min(fallSpeed * landImpact, maxLandImpact);
+        }
+        if (grounded)
+            airTime = 0f;
+        headGrounded = grounded;
+
+        Spring(ref knee, ref kneeVelocity, 0f, kneeStiffness, kneeDamping, dt);
+    }
+
+    // Moves value toward target on a damped spring. Solved implicitly, so it stays stable even on
+    // long frames (a hitch, or the editor running in the background)
+    static void Spring(ref float value, ref float velocity, float target, float stiffness, float damping, float dt)
+    {
+        velocity = (velocity + (target - value) * stiffness * dt) / (1f + damping * dt + stiffness * dt * dt);
+        value += velocity * dt;
+    }
+
+    // Speeding up leans the head forward and slowing down rocks it back, on a spring so it
+    // overshoots a little and settles. Turning sharply while strafing tilts it sideways.
+    void UpdateLean(float dt)
+    {
+        if (body == null)
+            return;
+
+        // The controller turns the player after moving it, so measuring against the player's facing
+        // here would read every fast turn as a sudden swerve. The body measures before the turn;
+        // without it, use only the change in speed.
+        Vector3 local = hasBody
+            ? fullBody.LocalVelocity
+            : new Vector3(0f, 0f, new Vector3(velocity.x, 0f, velocity.z).magnitude);
+        Vector3 rawAcceleration = (local - lastVelocity) / dt;
+        lastVelocity = local;
+        acceleration = Vector3.Lerp(acceleration, rawAcceleration, 1f - Mathf.Exp(-12f * dt));
+
+        bool grounded = controller == null || controller.Grounded;
+        Vector2 target = grounded
+            ? new Vector2(
+                Mathf.Clamp(acceleration.z * leanPerAcceleration, -maxHeadLean, maxHeadLean),
+                Mathf.Clamp(acceleration.x * leanPerAcceleration * 0.5f, -maxHeadLean, maxHeadLean))
+            : Vector2.zero;
+
+        Spring(ref lean.x, ref leanVelocity.x, target.x, leanStiffness, leanDamping, dt);
+        Spring(ref lean.y, ref leanVelocity.y, target.y, leanStiffness, leanDamping, dt);
     }
 
     Vector3 Breathing()
@@ -884,7 +1079,7 @@ public class FirstPersonArms : MonoBehaviour
         wasGrounded = grounded;
 
         // Arms trail behind vertical motion: up while rising, down while falling
-        float lift = grounded ? 0f : Mathf.Clamp(-body.velocity.y * airOffsetPerSpeed, -0.06f, 0.06f);
+        float lift = grounded ? 0f : Mathf.Clamp(-velocity.y * airOffsetPerSpeed, -0.06f, 0.06f);
         smoothedLift = Mathf.Lerp(smoothedLift, lift, 10f * dt);
 
         landTimer += dt;
