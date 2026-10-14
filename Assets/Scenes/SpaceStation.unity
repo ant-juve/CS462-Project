@@ -18613,6 +18613,9 @@ MonoBehaviour:
   moveSpeed: 3
   turnSpeed: 360
   player: {fileID: 277163546}
+  attackRange: 2
+  damagePerHit: 20
+  attackCooldown: 1
   startWaypoint: {fileID: 895312993}
 --- !u!65 &204636785
 BoxCollider:
@@ -18701,7 +18704,7 @@ Transform:
   m_GameObject: {fileID: 204636783}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -2.93346, y: -8.653, z: 17.195}
+  m_LocalPosition: {x: -2.93346, y: -8.653, z: 14.503}
   m_LocalScale: {x: 1, y: 2.5, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -67766,6 +67769,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Waypoint
   neighbors:
   - {fileID: 995093481}
+  - {fileID: 895312993}
 --- !u!4 &769964619
 Transform:
   m_ObjectHideFlags: 0
@@ -89034,6 +89038,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Waypoint
   neighbors:
   - {fileID: 1589453329}
+  - {fileID: 769964618}
 --- !u!4 &995093482
 Transform:
   m_ObjectHideFlags: 0
@@ -140613,7 +140618,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Waypoint
   neighbors:
-  - {fileID: 895312993}
+  - {fileID: 995093481}
 --- !u!4 &1589453330
 Transform:
   m_ObjectHideFlags: 0
@@ -140623,7 +140628,7 @@ Transform:
   m_GameObject: {fileID: 1589453328}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -2.754, y: -8.71525, z: 18.896}
+  m_LocalPosition: {x: -2.754, y: -8.71525, z: 18.894}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

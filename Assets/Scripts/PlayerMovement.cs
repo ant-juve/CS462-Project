@@ -61,4 +61,9 @@ public class PlayerMovement : MonoBehaviour
         playerCamera.transform.localRotation =
             Quaternion.Euler(cameraXRotation, 0f, 0f);
     }
+
+    public void ResetMovement()
+    {
+        verticalVelocity = 0f;
+    }
 }
