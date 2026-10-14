@@ -79,6 +79,8 @@ public class FirstPersonArms : MonoBehaviour
     public float sprintBlendSpeed = 3f;
 
     [Header("Arm Swing")]
+    [Tooltip("Full forward-and-back arm swings per meter moved (lower = slower swing)")]
+    public float swingCyclesPerMeter = 0.22f;
     [Tooltip("How far empty arms swing forward and back from the shoulder while walking, in degrees")]
     public float walkSwing = 8f;
     [Tooltip("How far empty arms pump forward and back while sprinting, in degrees")]
@@ -167,6 +169,7 @@ public class FirstPersonArms : MonoBehaviour
     private Vector3 swayPosition;
     private Quaternion lastCameraRotation;
     private float bobPhase;
+    private float swingPhase;
     private float bobStrength;
     private float sprintWeight;
     private float runWeight; // 0 = walking pose, 1 = running pose
@@ -658,11 +661,11 @@ public class FirstPersonArms : MonoBehaviour
     }
 
     // How far an empty arm is swung forward right now, in degrees. Arms swing opposite to each
-    // other and to the legs, one full swing per two steps
+    // other, at their own pace (swingCyclesPerMeter)
     float ArmSwing(float side)
     {
         float amount = Mathf.Lerp(walkSwing * Mathf.Clamp01(bobStrength), runSwing, RunBlend);
-        return side * Mathf.Sin(bobPhase) * amount;
+        return side * Mathf.Sin(swingPhase) * amount;
     }
 
     float RunBlend => Mathf.SmoothStep(0f, 1f, runWeight);
@@ -827,7 +830,10 @@ public class FirstPersonArms : MonoBehaviour
         bool sprinting = controller != null && speed > controller.MoveSpeed + 0.5f;
 
         if (grounded)
+        {
             bobPhase += speed * bobCyclesPerMeter * 2f * Mathf.PI * dt;
+            swingPhase += speed * swingCyclesPerMeter * 2f * Mathf.PI * dt;
+        }
 
         float target = grounded ? Mathf.Clamp01(speed / 4f) : 0f;
         if (sprinting)
