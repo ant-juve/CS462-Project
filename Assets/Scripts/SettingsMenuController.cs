@@ -12,20 +12,20 @@ public class SettingsMenuController : MonoBehaviour
     [SerializeField] private Slider volumeSlider;
     [SerializeField] private TextMeshProUGUI volumeValueText;
 
-    private PlayerMovement player;
+    private FirstPersonPlayer player;
 
     // Applies saved settings when the scene loads, even if the panel is never opened
-    public static void ApplySavedSettings(PlayerMovement player)
+    public static void ApplySavedSettings(FirstPersonPlayer player)
     {
         if (player != null)
-            player.mouseSensitivity = PlayerPrefs.GetFloat(SensitivityKey, player.mouseSensitivity);
+            player.MouseSensitivity = PlayerPrefs.GetFloat(SensitivityKey, player.MouseSensitivity);
 
         AudioListener.volume = PlayerPrefs.GetFloat(VolumeKey, 1f);
     }
 
     void Awake()
     {
-        player = FindFirstObjectByType<PlayerMovement>();
+        player = FindFirstObjectByType<FirstPersonPlayer>();
 
         sensitivitySlider.onValueChanged.AddListener(SetSensitivity);
         volumeSlider.onValueChanged.AddListener(SetVolume);
@@ -34,7 +34,7 @@ public class SettingsMenuController : MonoBehaviour
     void OnEnable()
     {
         // Show the current values each time the panel opens
-        float sensitivity = player != null ? player.mouseSensitivity : PlayerPrefs.GetFloat(SensitivityKey, 2f);
+        float sensitivity = player != null ? player.MouseSensitivity : PlayerPrefs.GetFloat(SensitivityKey, 2f);
         sensitivitySlider.SetValueWithoutNotify(sensitivity);
         volumeSlider.SetValueWithoutNotify(AudioListener.volume);
         UpdateLabels();
@@ -43,7 +43,7 @@ public class SettingsMenuController : MonoBehaviour
     public void SetSensitivity(float value)
     {
         if (player != null)
-            player.mouseSensitivity = value;
+            player.MouseSensitivity = value;
 
         PlayerPrefs.SetFloat(SensitivityKey, value);
         UpdateLabels();

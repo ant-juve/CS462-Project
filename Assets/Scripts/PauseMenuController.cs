@@ -12,7 +12,7 @@ public class PauseMenuController : MonoBehaviour
 
     void Start()
     {
-        SettingsMenuController.ApplySavedSettings(FindFirstObjectByType<PlayerMovement>());
+        SettingsMenuController.ApplySavedSettings(FindFirstObjectByType<FirstPersonPlayer>());
         Resume();
     }
 
