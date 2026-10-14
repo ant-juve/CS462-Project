@@ -67,8 +67,6 @@ public class FirstPersonArms : MonoBehaviour
     [Range(0f, 1f)] public float wristRelax = 0.85f;
 
     [Header("Walk Bob")]
-    [Tooltip("Side-to-side sway cycles per meter walked; each cycle is two steps (left, right)")]
-    public float bobCyclesPerMeter = 0.35f;
     [Tooltip("How far the arms sway side to side (x) and bounce up and down (y), in meters")]
     public Vector2 bobSize = new Vector2(0.006f, 0.005f);
     [Tooltip("How quickly the bob fades in when you start moving and out when you stop")]
@@ -79,7 +77,7 @@ public class FirstPersonArms : MonoBehaviour
     public float sprintBlendSpeed = 3f;
 
     [Header("Arm Swing")]
-    [Tooltip("Full forward-and-back arm swings per meter moved (lower = slower swing)")]
+    [Tooltip("Full forward-and-back arm swings per meter moved (lower = slower swing). Each swing is two steps, and the head bob and arm bounce follow the same rhythm")]
     public float swingCyclesPerMeter = 0.22f;
     [Tooltip("How far empty arms swing forward and back from the shoulder while walking, in degrees")]
     public float walkSwing = 8f;
@@ -94,6 +92,12 @@ public class FirstPersonArms : MonoBehaviour
     [Range(0f, 1f)] public float runFistCurl = 1f;
     [Tooltip("How quickly the arms move into the running pose when you start sprinting and out when you stop")]
     public float runBlendSpeed = 4f;
+
+    [Header("Head Bob")]
+    [Tooltip("How far the view sways side to side (x) and dips (y) with each step while walking, in meters")]
+    public Vector2 headBobWalk = new Vector2(0.004f, 0.008f);
+    [Tooltip("The same while sprinting")]
+    public Vector2 headBobRun = new Vector2(0.007f, 0.016f);
 
     [Header("Idle Breathing")]
     public float breatheAmount = 0.004f;
@@ -168,7 +172,7 @@ public class FirstPersonArms : MonoBehaviour
     private Quaternion restRotation;
     private Vector3 swayPosition;
     private Quaternion lastCameraRotation;
-    private float bobPhase;
+    private float bendAmount; // how far into the current grab's bend the view is (0-1)
     private float swingPhase;
     private float bobStrength;
     private float sprintWeight;
@@ -448,6 +452,9 @@ public class FirstPersonArms : MonoBehaviour
 
         UpdateGrab(dt);
         UpdateFingers(dt);
+
+        if (cameraRoot != null)
+            cameraRoot.localPosition = cameraRootRest + bend * bendAmount + HeadBob();
     }
 
     PickupItem HeldItem => grabPhase != GrabPhase.Reach && grabPhase != GrabPhase.Pull && hotbar != null ? hotbar.SelectedItem : null;
@@ -488,8 +495,7 @@ public class FirstPersonArms : MonoBehaviour
 
     void ApplyBend(float amount)
     {
-        if (cameraRoot != null)
-            cameraRoot.localPosition = cameraRootRest + bend * amount;
+        bendAmount = amount;
     }
 
     void UpdateGrab(float dt)
@@ -831,7 +837,6 @@ public class FirstPersonArms : MonoBehaviour
 
         if (grounded)
         {
-            bobPhase += speed * bobCyclesPerMeter * 2f * Mathf.PI * dt;
             swingPhase += speed * swingCyclesPerMeter * 2f * Mathf.PI * dt;
         }
 
@@ -843,10 +848,23 @@ public class FirstPersonArms : MonoBehaviour
         runWeight = Mathf.MoveTowards(runWeight, sprinting ? 1f : 0f, runBlendSpeed * dt);
         float lower = sprintLower * Mathf.SmoothStep(0f, 1f, sprintWeight);
 
-        // One side-to-side sway per two steps, one bounce per step
+        // One side-to-side sway per two steps, one bounce per step, lowest as each foot lands
+        // (when the arms are at the ends of their swing)
         return new Vector3(
-            Mathf.Sin(bobPhase) * bobSize.x * bobStrength,
-            -Mathf.Abs(Mathf.Cos(bobPhase)) * bobSize.y * bobStrength - lower,
+            Mathf.Sin(swingPhase) * bobSize.x * bobStrength,
+            -Mathf.Abs(Mathf.Sin(swingPhase)) * bobSize.y * bobStrength - lower,
+            0f);
+    }
+
+    // The head dips a little as each foot lands and shifts over the planted foot, in step with the
+    // arm swing: when the right arm is forward the left foot is down, so the head leans left.
+    // Local to the player, applied to the camera's target.
+    Vector3 HeadBob()
+    {
+        Vector2 size = Vector2.Lerp(headBobWalk, headBobRun, RunBlend) * Mathf.Clamp01(bobStrength);
+        return new Vector3(
+            -Mathf.Sin(swingPhase) * size.x,
+            Mathf.Cos(2f * swingPhase) * 0.5f * size.y, // low at each footfall, high mid-stride
             0f);
     }
 
