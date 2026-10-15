@@ -16,7 +16,8 @@ public class DoorController : MonoBehaviour
     private Vector3 rightOpen;
 
     private bool isOpen = false;
-    private float closeTimer = 0f;
+    private bool robotInside = false;
+    private float closeTimer;
 
     void Start()
     {
@@ -44,16 +45,17 @@ public class DoorController : MonoBehaviour
             openSpeed * Time.deltaTime
         );
 
-        // Start countdown once both doors finish opening
-        if (isOpen &&
+        bool fullyOpen =
             Vector3.Distance(leftDoor.localPosition, leftOpen) < 0.01f &&
-            Vector3.Distance(rightDoor.localPosition, rightOpen) < 0.01f)
+            Vector3.Distance(rightDoor.localPosition, rightOpen) < 0.01f;
+
+        if (isOpen && fullyOpen && !robotInside)
         {
             closeTimer -= Time.deltaTime;
 
             if (closeTimer <= 0f)
             {
-                isOpen = false;
+                CloseDoor();
             }
         }
     }
@@ -62,5 +64,27 @@ public class DoorController : MonoBehaviour
     {
         isOpen = true;
         closeTimer = closeDelay;
+    }
+
+    public void CloseDoor()
+    {
+        if (!robotInside)
+        {
+            isOpen = false;
+        }
+    }
+
+    public void SetRobotInside(bool inside)
+    {
+        robotInside = inside;
+
+        if (inside)
+        {
+            OpenDoor();
+        }
+        else
+        {
+            closeTimer = closeDelay;
+        }
     }
 }
