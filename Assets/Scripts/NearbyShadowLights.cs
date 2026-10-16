@@ -47,7 +47,8 @@ public class NearbyShadowLights : MonoBehaviour
             // Only realtime point and spot lights that don't already cast shadows
             if (light.type != LightType.Point && light.type != LightType.Spot)
                 continue;
-            if (light.lightmapBakeType == LightmapBakeType.Baked || light.shadows != LightShadows.None)
+            if (light.bakingOutput.lightmapBakeType == LightmapBakeType.Baked ||
+                light.shadows != LightShadows.None)
                 continue;
             indexOf[light] = candidates.Count;
             candidates.Add(new Candidate { light = light, originalShadows = light.shadows, originalStrength = light.shadowStrength });
