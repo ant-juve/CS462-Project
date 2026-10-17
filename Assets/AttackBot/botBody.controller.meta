@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: bb9f42d9e97f243c0a86bd082229eca8
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 15120
+  packageName: Attack Bot
+  packageVersion: 1.2
+  assetPath: Assets/AttackBot/botBody.controller
+  uploadId: 246055
