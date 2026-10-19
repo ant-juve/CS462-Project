@@ -27611,6 +27611,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: attackBot
       objectReference: {fileID: 0}
+    - target: {fileID: 1928244954057134, guid: 4efdc095f88074e53a4f28617077b108, type: 3}
+      propertyPath: m_TagString
+      value: Robot
+      objectReference: {fileID: 0}
     - target: {fileID: 1933460375180758, guid: 4efdc095f88074e53a4f28617077b108, type: 3}
       propertyPath: m_Name
       value: leftWheel
