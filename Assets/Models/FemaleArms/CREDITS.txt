@@ -1,0 +1,5 @@
+"FREE GameReady [FPS Female Arms]" by BAMEN (@bamenwo05)
+https://sketchfab.com/3d-models/free-gameready-fps-female-arms-007f5dd998ad4376943ed6fb3dfa2e15
+Licensed under CC Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+Changes: textures downscaled from 4K to 2K; roughness map converted to a URP metallic/smoothness map.
