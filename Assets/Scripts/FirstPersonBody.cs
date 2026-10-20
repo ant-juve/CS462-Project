@@ -99,6 +99,8 @@ public class FirstPersonBody : MonoBehaviour
 
     private float scale = 1f;
     private float restZ;
+    private Transform headBone;
+    private Vector3 restHead; // where the head bone sits standing, relative to the player, facing the torso's way
     private float torsoYaw;     // world yaw the body faces
     private bool catchingUp;
     private bool movingBack; // playing the leg clips in reverse
@@ -150,6 +152,8 @@ public class FirstPersonBody : MonoBehaviour
         float headForward = transform.InverseTransformPoint(head.position).z * scale;
 
         restZ = -headForward - bodyBack;
+        headBone = head;
+        restHead = new Vector3(0f, headHeight * scale, -bodyBack);
         foreach (Transform t in new[] { visible.animator.transform, shadowRoot })
         {
             t.localScale = Vector3.one * scale;
@@ -254,8 +258,27 @@ public class FirstPersonBody : MonoBehaviour
         shadowRoot.SetLocalPositionAndRotation(position, offset);
 
         visible.Pose(weights, times);
+        Vector3 placed = position + offset * HeadCorrection(offset);
+        visible.animator.transform.localPosition = placed;
+        shadowRoot.localPosition = placed;
         for (int i = 0; i < poseFrom.Length; i++)
             poseTo[i].SetLocalPositionAndRotation(poseFrom[i].localPosition, poseFrom[i].localRotation);
+    }
+
+    // The jump clip lifts the whole body off the ground and throws the chest forward, but the player
+    // capsule already does the real jumping, so the clip's body would rise a second time and bring
+    // the neck and shoulders up into the first-person view. This works out how far to move the body
+    // so the head never rises above, or (while jumping) moves ahead of, where it sits standing.
+    // Facing the torso's way; `offset` is the torso's turn from the player's facing.
+    Vector3 HeadCorrection(Quaternion offset)
+    {
+        if (headBone == null)
+            return Vector3.zero;
+
+        Vector3 head = Quaternion.Inverse(offset) * transform.InverseTransformPoint(headBone.position);
+        float down = Mathf.Min(0f, restHead.y - head.y);
+        float back = Mathf.Min(0f, restHead.z - head.z) * weights[Jump]; // walking and running keep their lean
+        return new Vector3(0f, down, back);
     }
 
     // Moving: the body faces where you're looking. Standing: it stays put until your head has turned
@@ -315,7 +338,19 @@ public class FirstPersonBody : MonoBehaviour
         // so pace the cycle by forward + sideways speed, which makes up exactly that difference and
         // keeps the planted foot still on diagonals. Straight lines are unaffected.
         if (grounded && stride > 0.01f)
-            StridePhase = Mathf.Repeat(StridePhase + (forward + side) / stride * dt, 1f);
+        {
+            float rate = (forward + side) / stride; // strides per second
+            // There's no sprinting side-step, only a walking one, so sprinting sideways would play it
+            // several times faster than it was made for and the legs (and arms, which follow them)
+            // turn into a blur. Sprinting in any direction steps at the forward sprint's pace instead:
+            // longer side-steps with a little slide
+            float sprinting = controller != null && controller.SprintSpeed > controller.MoveSpeed
+                ? Mathf.Clamp01((speed - controller.MoveSpeed) / (controller.SprintSpeed - controller.MoveSpeed))
+                : 0f;
+            float forwardSprintRate = speed / Mathf.Max(runStride, 0.01f);
+            rate = Mathf.Lerp(rate, forwardSprintRate, sprinting);
+            StridePhase = Mathf.Repeat(StridePhase + rate * dt, 1f);
+        }
 
         // A foot lands at stride 0 (left) and 0.5 (right)
         if (grounded && moving > 0.5f && (CrossedStep(before, StridePhase, 0f) || CrossedStep(before, StridePhase, 0.5f)))

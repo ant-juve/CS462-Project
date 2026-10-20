@@ -2,7 +2,7 @@ using StarterAssets;
 using UnityEngine;
 
 // Connects the Starter Assets first-person controller to the rest of the game:
-// the pause menu, the sensitivity setting and the hotbar.
+// the pause menu, the sensitivity setting, the hotbar and the EPD.
 // Goes on the PlayerCapsule alongside FirstPersonController.
 [RequireComponent(typeof(FirstPersonController))]
 public class FirstPersonPlayer : MonoBehaviour
@@ -35,6 +35,23 @@ public class FirstPersonPlayer : MonoBehaviour
 
         if (GetComponent<Hotbar>() == null)
             gameObject.AddComponent<Hotbar>();
+        if (GetComponent<Dosimeter>() == null)
+            gameObject.AddComponent<Dosimeter>();
+        if (GetComponent<EPDDisplay>() == null)
+            gameObject.AddComponent<EPDDisplay>();
+        if (GetComponentInChildren<GeigerCounter>() == null)
+        {
+            // Own child object so its AudioSource isn't shared with the footsteps
+            GameObject geiger = new GameObject("GeigerCounter");
+            geiger.transform.SetParent(transform, false);
+            geiger.AddComponent<GeigerCounter>();
+        }
+        if (GetComponentInChildren<PlayerCough>() == null)
+        {
+            GameObject cough = new GameObject("Cough");
+            cough.transform.SetParent(transform, false);
+            cough.AddComponent<PlayerCough>();
+        }
     }
 
     void ApplySize()

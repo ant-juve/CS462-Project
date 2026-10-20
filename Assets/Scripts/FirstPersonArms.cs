@@ -7,7 +7,8 @@ using UnityEngine.Playables;
 // First-person arms that hang off the camera. The model only has static poses, so all the
 // movement here is procedural: idle breathing, walk/sprint bob, arm swing and a running pose,
 // look sway, jump/land,
-// a dip when switching hotbar slots, and a reach-out-and-grab when picking something up.
+// a dip when switching hotbar slots, a reach-out-and-grab when picking something up, and
+// coughing into the left fist (with the head jerking forward) during radiation coughing fits.
 //
 // Grabbing: the palm reaches to the nearest point on the item's surface with the wrist turned
 // toward it, then each finger closes joint by joint until it touches the item. Items keep
@@ -159,10 +160,31 @@ public class FirstPersonArms : MonoBehaviour
     [Tooltip("Comfortable reach from the eyes before bending or leaning, in meters")]
     public float comfortableReach = 0.7f;
 
+    [Header("Cough")]
+    [Tooltip("Where the left wrist goes while coughing into the fist, relative to the camera (right, up, forward), in meters")]
+    public Vector3 coughWrist = new Vector3(-0.1f, -0.14f, 0.26f);
+    [Tooltip("Seconds to bring the fist up to the mouth when a fit starts, and to lower it after")]
+    public float coughRaiseTime = 0.25f;
+    public float coughLowerTime = 0.5f;
+    [Tooltip("How hard each cough jolts the head and fist: at the warning dose, and at lethal")]
+    public float coughStrengthAtWarning = 0.5f;
+    public float coughStrengthAtLethal = 1.6f;
+    [Tooltip("How far the head jerks forward (degrees) and drops (meters) with each cough, at strength 1")]
+    public float coughNod = 8f;
+    public float coughDrop = 0.03f;
+    [Tooltip("How far the fist jabs back toward the mouth with each cough, in meters")]
+    public float coughJab = 0.03f;
+    [Tooltip("Most the arm may slide toward the mouth when it can't quite reach, in meters")]
+    public float coughMaxSlide = 0.05f;
+    [Tooltip("Springiness of each cough's jolt: higher snaps back faster")]
+    public float coughStiffness = 140f;
+    public float coughDamping = 11f;
+
     private Hotbar hotbar;
     private CharacterController body;
     private FirstPersonController controller;
     private FirstPersonBody fullBody; // optional: the visible body, whose shoulders and stride the arms follow
+    private PlayerCough cough;        // optional: radiation coughing fits
     private Transform cam;
     private Transform cameraRoot;
     private Vector3 cameraRootRest;
@@ -238,6 +260,10 @@ public class FirstPersonArms : MonoBehaviour
     private bool wasGrounded = true;
     private PickupItem lastSelected;
     private float switchTimer = 1f;
+    private float coughWeight;        // how far the fist is up at the mouth (0-1)
+    private float coughJolt;          // each cough kicks this spring; drives the head jerk and fist jab
+    private float coughJoltVelocity;
+    private float coughRoll;          // which way (and how much) the head tilts on this cough, -1 to 1
 
     private enum GrabPhase { None, Reach, Pull, Return }
     private GrabPhase grabPhase;
@@ -263,6 +289,9 @@ public class FirstPersonArms : MonoBehaviour
             fullBody = player.GetComponent<FirstPersonBody>();
             if (fullBody != null && !fullBody.isActiveAndEnabled)
                 fullBody = null;
+            cough = player.GetComponentInChildren<PlayerCough>();
+            if (cough != null)
+                cough.Coughed += OnCough;
             if (controller != null && controller.CinemachineCameraTarget != null)
             {
                 cameraRoot = controller.CinemachineCameraTarget.transform;
@@ -312,6 +341,8 @@ public class FirstPersonArms : MonoBehaviour
     {
         if (hotbar != null && hotbar.GrabAnimation == (System.Action<PickupItem, System.Action>)PlayGrab)
             hotbar.GrabAnimation = null;
+        if (cough != null)
+            cough.Coughed -= OnCough;
     }
 
     // ---------- Setup ----------
@@ -488,7 +519,7 @@ public class FirstPersonArms : MonoBehaviour
     // Remembers the posed rotation of every bone the code moves each frame
     void RecordPosedBones()
     {
-        var bones = new List<Transform> { leftForearm, leftHand, rightForearm, rightHand };
+        var bones = new List<Transform> { leftUpperArm, leftForearm, leftHand, rightForearm, rightHand };
         bones.AddRange(leftFingerJoints);
         bones.AddRange(fingerJoints);
         bones.RemoveAll(b => b == null);
@@ -549,12 +580,19 @@ public class FirstPersonArms : MonoBehaviour
 
         leftModel.localPosition = modelOffset;
         leftModel.localRotation = Quaternion.Euler(modelRotation);
-        HangArm(leftModel, leftShoulder, leftHand, -1f, 1f, leftSwing);
-        BendElbow(leftUpperArm, leftForearm, leftHand, -1f, 1f, leftSwing);
-        StraightenWrist(leftHand, leftForearm, leftKnuckle, 1f);
+        // While coughing the left arm stays hanging from the body's shoulder and bends up from there,
+        // so the whole model never swings round or slides into view; only the swing, running bend
+        // and relaxed wrist fade out
+        UpdateCough(dt);
+        float hanging = 1f - Ease(coughWeight);
+        HangArm(leftModel, leftShoulder, leftHand, -1f, 1f, leftSwing * hanging);
+        BendElbow(leftUpperArm, leftForearm, leftHand, -1f, hanging, leftSwing);
+        StraightenWrist(leftHand, leftForearm, leftKnuckle, hanging);
+        CoughArm();
+        float fist = Ease(coughWeight); // coughing into a balled fist
         for (int i = 0; i < leftFingerJoints.Count; i++)
             leftFingerJoints[i].localRotation = Quaternion.Slerp(leftFingerJoints[i].localRotation, leftClosedRotations[i],
-                leftIsThumb[i] ? restingThumbCurl : restingCurl);
+                Mathf.Lerp(leftIsThumb[i] ? restingThumbCurl : restingCurl, 1f, fist));
 
         UpdateGrab(dt);
         UpdateFingers(dt);
@@ -815,6 +853,81 @@ public class FirstPersonArms : MonoBehaviour
         return Mathf.SmoothStep(0f, 1f, t);
     }
 
+    // ---------- Cough ----------
+
+    // Called by PlayerCough on every cough in a fit
+    void OnCough()
+    {
+        // Harder the higher the dose, with a little variation so no two coughs look the same
+        float strength = Mathf.Lerp(coughStrengthAtWarning, coughStrengthAtLethal, cough.Severity) * Random.Range(0.85f, 1.15f);
+        coughJoltVelocity += 14f * strength;
+        coughRoll = Random.Range(-1f, 1f);
+    }
+
+    void UpdateCough(float dt)
+    {
+        bool inFit = cough != null && cough.InFit;
+        float time = inFit ? coughRaiseTime : coughLowerTime;
+        coughWeight = Mathf.MoveTowards(coughWeight, inFit ? 1f : 0f, dt / Mathf.Max(time, 0.01f));
+        Spring(ref coughJolt, ref coughJoltVelocity, 0f, coughStiffness, coughDamping, dt);
+    }
+
+    // Brings the left fist up in front of the mouth, knuckles across it, elbow down and out to the
+    // side. The fist follows the camera, so the head jerking forward on each cough drives into it,
+    // and it jabs back a little toward the mouth as well.
+    void CoughArm()
+    {
+        float weight = Ease(coughWeight);
+        if (weight <= 0f || leftUpperArm == null || leftForearm == null || leftKnuckle == null)
+            return;
+
+        Vector3 wristLocal = coughWrist + Vector3.back * (coughJolt * coughJab);
+        Vector3 wrist = cam.position + cam.rotation * wristLocal;
+        Vector3 elbowHint = wrist + cam.rotation * new Vector3(-0.3f, -0.5f, 0.05f);
+        TwoBoneIK(leftUpperArm, leftForearm, leftHand, wrist, elbowHint, weight);
+
+        // If the arm couldn't quite reach (looking far up or down), nudge it the last few
+        // centimeters; any more would drag the cut-off shoulder into view
+        leftModel.position += Vector3.ClampMagnitude(wrist - leftHand.position, coughMaxSlide) * weight;
+
+        // Knuckles pointing across the mouth toward the right, tipped up a little
+        Vector3 knuckles = leftKnuckle.position - leftHand.position;
+        Vector3 across = cam.rotation * new Vector3(0.9f, 0.25f, -0.1f);
+        Quaternion turn = Quaternion.FromToRotation(knuckles, across);
+        leftHand.rotation = Quaternion.Slerp(Quaternion.identity, turn, weight) * leftHand.rotation;
+    }
+
+    // Bends a shoulder-elbow-wrist chain so the wrist lands on `target`, with the elbow bending
+    // toward `hint`. The law of cosines gives where the elbow must sit for the two bone lengths.
+    // Worked out at full strength, then each joint is blended from its current rotation by `weight`.
+    static void TwoBoneIK(Transform upper, Transform lower, Transform end, Vector3 target, Vector3 hint, float weight)
+    {
+        Quaternion upperBefore = upper.localRotation;
+        Quaternion lowerBefore = lower.localRotation;
+
+        Vector3 shoulder = upper.position;
+        float upperLength = Vector3.Distance(shoulder, lower.position);
+        float lowerLength = Vector3.Distance(lower.position, end.position);
+        Vector3 toTarget = target - shoulder;
+        float reach = Mathf.Clamp(toTarget.magnitude, Mathf.Abs(upperLength - lowerLength) + 0.001f,
+                                  upperLength + lowerLength - 0.001f);
+        Vector3 direction = toTarget.normalized;
+
+        float cos = (upperLength * upperLength + reach * reach - lowerLength * lowerLength) / (2f * upperLength * reach);
+        float sin = Mathf.Sqrt(Mathf.Max(0f, 1f - cos * cos));
+        Vector3 bendDirection = Vector3.ProjectOnPlane(hint - shoulder, direction).normalized;
+        if (bendDirection == Vector3.zero)
+            bendDirection = Vector3.ProjectOnPlane(lower.position - shoulder, direction).normalized;
+        Vector3 elbow = shoulder + direction * (upperLength * cos) + bendDirection * (upperLength * sin);
+
+        upper.rotation = Quaternion.FromToRotation(lower.position - shoulder, elbow - shoulder) * upper.rotation;
+        Vector3 wrist = shoulder + direction * reach;
+        lower.rotation = Quaternion.FromToRotation(end.position - lower.position, wrist - lower.position) * lower.rotation;
+
+        upper.localRotation = Quaternion.Slerp(upperBefore, upper.localRotation, weight);
+        lower.localRotation = Quaternion.Slerp(lowerBefore, lower.localRotation, weight);
+    }
+
     // ---------- Fingers ----------
 
     void UpdateFingers(float dt)
@@ -976,6 +1089,11 @@ public class FirstPersonArms : MonoBehaviour
         Vector3 leanShift = new Vector3(0f, 0f, lean.x * 0.006f); // leaning forward carries the head forward
         bob.y += knee;
         nod -= knee * landNod;
+
+        // Coughing hard: the head jerks forward and down into the fist, then springs back
+        bob += new Vector3(0f, -coughDrop, coughDrop * 0.5f) * coughJolt;
+        nod += coughJolt * coughNod;
+        roll += coughJolt * coughRoll * coughNod * 0.2f;
 
         Vector3 lookDown = hasBody ? new Vector3(0f, 0f, fullBody.LookDownShift) : Vector3.zero;
         cameraRoot.localPosition = cameraRootRest + bend * bendAmount + bob + leanShift + lookDown;
