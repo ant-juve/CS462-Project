@@ -1,6 +1,8 @@
 // Radioactive sludge: dark, murky water with drifting patches of dull scum, slow heavy ripples and
 // faint green wisps glowing under the surface. Lit by URP's own PBR lighting (works with Forward+),
-// so lamps and reflection probes show up in the wet parts.
+// so lamps and reflection probes show up in the wet parts. Reflection probes and ambient light are
+// baked and don't change when lamps dim, so RadiationPuddle sets _LightLevel from the lamps around
+// it to dim them, and the glow, along with the room.
 // Used by RadiationPuddle; lives in Resources so it's included in builds.
 Shader "Radiation/Sludge"
 {
@@ -25,6 +27,8 @@ Shader "Radiation/Sludge"
         [HDR] _GlowColor ("Glow", Color) = (0.03, 0.12, 0.02, 1)
         _GlowPulse ("Glow Pulse", Range(0, 1)) = 0.35
         _GlowPulseSpeed ("Glow Pulse Speed", Float) = 0.4
+
+        _LightLevel ("Light Level", Range(0, 1)) = 1
     }
 
     SubShader
@@ -79,6 +83,7 @@ Shader "Radiation/Sludge"
                 half4 _GlowColor;
                 half _GlowPulse;
                 float _GlowPulseSpeed;
+                half _LightLevel;
             CBUFFER_END
 
             struct Attributes
@@ -169,9 +174,9 @@ Shader "Radiation/Sludge"
                 surface.albedo = lerp(_BaseColor.rgb, _ScumColor.rgb, scum);
                 surface.specular = lerp(half3(0.03, 0.03, 0.03), film * 0.15, sheen); // murky water reflects ~3%
                 surface.smoothness = lerp(_Smoothness, _ScumSmoothness, scum);
-                surface.occlusion = 1.0;
+                surface.occlusion = _LightLevel; // only darkens reflections and ambient light, not the lamps' own light
                 surface.alpha = input.alpha * _Opacity;
-                surface.emission = glow;
+                surface.emission = glow * _LightLevel; // fades with the room's lamps too
 
                 InputData lighting = (InputData)0;
                 lighting.positionWS = positionWS;

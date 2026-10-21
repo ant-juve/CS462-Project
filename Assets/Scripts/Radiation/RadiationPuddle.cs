@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 // A radioactive spill on the floor: dark, murky sludge with drifting scum, slow heavy ripples and a
@@ -37,12 +38,44 @@ public class RadiationPuddle : MonoBehaviour
     [Tooltip("Faint green glow under the surface. Set to black to turn it off")]
     public Color glow = new Color(0.03f, 0.12f, 0.02f);
 
+    private static readonly List<RadiationPuddle> active = new List<RadiationPuddle>();
+    public static IReadOnlyList<RadiationPuddle> Active => active;
+
+    private float[] edgeRadii; // distance from the center to the main puddle's edge at each edge point
+    private Material material;
+    private Light[] nearbyLights; // realtime lamps whose light reaches the puddle
+    private float[] lightWeights;
+    private float brightestLight; // the most light seen reaching the puddle so far
+
+    void OnEnable() => active.Add(this);
+    void OnDisable() => active.Remove(this);
+
+    // True if `feet` (a world position) is on the main puddle: inside its wobbly edge and no more
+    // than `height` above or below it. The droplets around it don't count
+    public bool IsStandingIn(Vector3 feet, float height = 0.5f)
+    {
+        if (edgeRadii == null)
+            return false;
+
+        Vector3 local = transform.InverseTransformPoint(feet);
+        if (Mathf.Abs(local.y) > height)
+            return false;
+
+        // Edge points go round from +x toward +z, so find the two either side of this direction
+        float angle = Mathf.Repeat(Mathf.Atan2(local.z, local.x), Mathf.PI * 2f);
+        float index = angle / (Mathf.PI * 2f) * EdgePoints;
+        int i = (int)index % EdgePoints;
+        float edge = Mathf.Lerp(edgeRadii[i], edgeRadii[(i + 1) % EdgePoints], index - Mathf.Floor(index));
+        return new Vector2(local.x, local.z).magnitude <= edge;
+    }
+
     void Awake()
     {
         System.Random random = new System.Random(seed != 0 ? seed : Random.Range(1, int.MaxValue));
-        Material material = CreateMaterial();
+        material = CreateMaterial();
 
-        CreateBlob("Puddle", Vector3.zero, radius, random, material);
+        edgeRadii = new float[EdgePoints];
+        CreateBlob("Puddle", Vector3.zero, radius, random, material, edgeRadii);
         for (int i = 0; i < droplets; i++)
         {
             float angle = (float)random.NextDouble() * Mathf.PI * 2f;
@@ -55,6 +88,54 @@ public class RadiationPuddle : MonoBehaviour
         RadiationSource source = GetComponent<RadiationSource>();
         source.shape = RadiationSource.Shape.Area;
         source.areaSize = new Vector3(radius * 2f, 3f, radius * 2f);
+    }
+
+    void Start()
+    {
+        FindNearbyLights();
+    }
+
+    void Update()
+    {
+        if (material != null && nearbyLights.Length > 0)
+            material.SetFloat("_LightLevel", LightLevel());
+    }
+
+    // The realtime point and spot lights in range of the puddle, weighted by how close they are.
+    // Found once, after Awake so every light in the scene exists
+    void FindNearbyLights()
+    {
+        List<Light> lights = new List<Light>();
+        List<float> weights = new List<float>();
+        foreach (Light light in FindObjectsByType<Light>(FindObjectsSortMode.None))
+        {
+            if (light.type != LightType.Point && light.type != LightType.Spot)
+                continue;
+            if (light.bakingOutput.isBaked && light.bakingOutput.lightmapBakeType == LightmapBakeType.Baked)
+                continue; // baked into the lightmaps; changing it at runtime does nothing
+            float distance = Vector3.Distance(light.transform.position, transform.position);
+            if (distance > light.range + radius)
+                continue;
+            lights.Add(light);
+            weights.Add(1f / (1f + distance * distance));
+        }
+        nearbyLights = lights.ToArray();
+        lightWeights = weights.ToArray();
+    }
+
+    // How bright the lamps around the puddle are now, compared with the brightest they've been
+    // (0-1). Works with anything that dims or blinks lights, like LightFlash
+    float LightLevel()
+    {
+        float total = 0f;
+        for (int i = 0; i < nearbyLights.Length; i++)
+        {
+            Light light = nearbyLights[i];
+            if (light != null && light.isActiveAndEnabled)
+                total += light.intensity * light.color.grayscale * lightWeights[i];
+        }
+        brightestLight = Mathf.Max(brightestLight, total);
+        return brightestLight > 0f ? total / brightestLight : 1f;
     }
 
     Material CreateMaterial()
@@ -80,12 +161,12 @@ public class RadiationPuddle : MonoBehaviour
         return material;
     }
 
-    void CreateBlob(string name, Vector3 center, float size, System.Random random, Material material)
+    void CreateBlob(string name, Vector3 center, float size, System.Random random, Material material, float[] radii = null)
     {
         GameObject blob = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
         blob.transform.SetParent(transform, false);
         blob.transform.localPosition = center + Vector3.up * FloorOffset;
-        blob.GetComponent<MeshFilter>().mesh = BlobMesh(size, random);
+        blob.GetComponent<MeshFilter>().mesh = BlobMesh(size, random, radii);
 
         MeshRenderer renderer = blob.GetComponent<MeshRenderer>();
         renderer.sharedMaterial = material;
@@ -94,7 +175,8 @@ public class RadiationPuddle : MonoBehaviour
 
     // A flat disc whose edge wobbles (a few sine waves of different frequencies added together),
     // with an outer ring that fades to transparent so the edge blends into the floor
-    Mesh BlobMesh(float size, System.Random random)
+    // radii, if given, gets the edge's distance from the center at each edge point
+    Mesh BlobMesh(float size, System.Random random, float[] radii)
     {
         float phase2 = (float)random.NextDouble() * Mathf.PI * 2f;
         float phase3 = (float)random.NextDouble() * Mathf.PI * 2f;
@@ -117,6 +199,8 @@ public class RadiationPuddle : MonoBehaviour
                          + 0.35f * Mathf.Sin(3f * angle + phase3)
                          + 0.25f * Mathf.Sin(5f * angle + phase5);
             float r = size * Mathf.Max(0.4f, 1f + irregularity * wobble);
+            if (radii != null)
+                radii[i] = r;
             Vector3 direction = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
 
             int inner = 1 + i;
