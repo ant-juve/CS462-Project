@@ -7,8 +7,9 @@ using UnityEngine.Playables;
 // First-person arms that hang off the camera. The model only has static poses, so all the
 // movement here is procedural: idle breathing, walk/sprint bob, arm swing and a running pose,
 // look sway, jump/land,
-// a dip when switching hotbar slots, a reach-out-and-grab when picking something up, and
-// coughing into the left fist (with the head jerking forward) during radiation coughing fits.
+// a dip when switching hotbar slots, a reach-out-and-grab when picking something up,
+// coughing into the left fist (with the head jerking forward) during radiation coughing fits,
+// and jabbing a held shot into the left forearm when using one.
 //
 // Grabbing: the palm reaches to the nearest point on the item's surface with the wrist turned
 // toward it, then each finger closes joint by joint until it touches the item. Items keep
@@ -96,6 +97,8 @@ public class FirstPersonArms : MonoBehaviour
     public float runBlendSpeed = 4f;
 
     [Header("Head Bob")]
+    [Tooltip("Overall strength of the head bob and tilt below: 1 is the full amount, 0 turns it off")]
+    [Range(0f, 1f)] public float headBobAmount = 0.5f;
     [Tooltip("How far the view sways side to side (x), dips (y) and surges forward and back (z) with each step while walking, in meters")]
     public Vector3 headBobWalk = new Vector3(0.004f, 0.01f, 0.005f);
     [Tooltip("The same while sprinting")]
@@ -122,6 +125,8 @@ public class FirstPersonArms : MonoBehaviour
     public float kneeDamping = 16f;
 
     [Header("Start / Stop Lean")]
+    [Tooltip("Off: the head stays level when you start and stop moving. On: it nods forward and rocks back")]
+    public bool startStopLean = false;
     [Tooltip("How far the head leans per m/s² of speeding up (forward) or slowing down (back), in degrees")]
     public float leanPerAcceleration = 0.3f;
     public float maxHeadLean = 3f;
@@ -180,6 +185,21 @@ public class FirstPersonArms : MonoBehaviour
     public float coughStiffness = 140f;
     public float coughDamping = 11f;
 
+    [Header("Inject")]
+    [Tooltip("Where the left wrist goes when holding the forearm out for a shot, relative to the camera (right, up, forward), in meters")]
+    public Vector3 injectWrist = new Vector3(-0.04f, -0.22f, 0.36f);
+    [Tooltip("Seconds to bring both arms up, jab the needle in, hold it there while it empties, and lower the arms")]
+    public float injectRaiseTime = 0.35f;
+    public float injectJabTime = 0.08f;
+    public float injectHoldTime = 0.6f;
+    public float injectReturnTime = 0.4f;
+    [Tooltip("How far above the forearm the palm waits before jabbing, and where it stops at contact, in meters. " +
+             "The contact gap is about how far the needle sticks out past the palm's center, so the tip just goes in")]
+    public float injectWindup = 0.18f;
+    public float injectContactGap = 0.08f;
+    [Tooltip("How much the head flinches when the needle goes in, as a fraction of a full-strength cough")]
+    public float injectFlinch = 0.25f;
+
     private Hotbar hotbar;
     private CharacterController body;
     private FirstPersonController controller;
@@ -219,6 +239,7 @@ public class FirstPersonArms : MonoBehaviour
     private Transform palm;              // a point on the palm's surface; held items attach here
     private Vector3 palmNormalLocal;     // in rightHand's local space
     private Vector3 fingerDirectionLocal; // wrist-to-fingertips, in rightHand's local space
+    private Vector3 pinkySideLocal;      // across the palm from the thumb side to the little finger, in rightHand's local space
     private float knuckleDistance;       // palm point to the knuckle line, in meters
     private readonly List<Transform> fingerJoints = new List<Transform>();
     private readonly List<int> fingerStart = new List<int>();  // index of each finger's first joint
@@ -272,6 +293,14 @@ public class FirstPersonArms : MonoBehaviour
     private Vector3 reachTarget;
     private Vector3 pullStart;
     private System.Action onGrabbed;
+
+    private enum InjectPhase { None, Raise, Jab, Hold, Return }
+    private InjectPhase injectPhase;
+    private float injectTimer;
+    private float injectWeight;   // how far the arms are up into the inject pose (0-1)
+    private float injectGap;      // how far above the forearm the palm is right now, in meters
+    private System.Action onInjected;
+    private System.Action onInjectDone;
 
     void Start()
     {
@@ -333,6 +362,7 @@ public class FirstPersonArms : MonoBehaviour
         {
             hotbar.AttachHandTo(palm);
             hotbar.GrabAnimation = PlayGrab;
+            hotbar.UseAnimation = PlayInject;
             lastSelected = hotbar.SelectedItem;
         }
     }
@@ -341,6 +371,8 @@ public class FirstPersonArms : MonoBehaviour
     {
         if (hotbar != null && hotbar.GrabAnimation == (System.Action<PickupItem, System.Action>)PlayGrab)
             hotbar.GrabAnimation = null;
+        if (hotbar != null && hotbar.UseAnimation == (System.Action<PickupItem, System.Action, System.Action>)PlayInject)
+            hotbar.UseAnimation = null;
         if (cough != null)
             cough.Coughed -= OnCough;
     }
@@ -475,6 +507,19 @@ public class FirstPersonArms : MonoBehaviour
         fingerDirectionLocal = Vector3.ProjectOnPlane(fingerDirection, palmNormalLocal).normalized;
         knuckleDistance = Vector3.Dot(knuckles - palmSurface, fingerDirectionLocal) * scale;
 
+        // The thumb sits on one side of the palm, so the little finger's side is the opposite way across it
+        Vector3 thumbRoot = palmCenter;
+        for (int i = 0; i < fingerJoints.Count; i++)
+        {
+            if (isThumb[i])
+            {
+                thumbRoot = rightHand.InverseTransformPoint(fingerJoints[i].position);
+                break;
+            }
+        }
+        Vector3 toThumb = Vector3.ProjectOnPlane(Vector3.ProjectOnPlane(thumbRoot - palmCenter, palmNormalLocal), fingerDirectionLocal);
+        pinkySideLocal = toThumb.sqrMagnitude > 0f ? -toThumb.normalized : Vector3.Cross(palmNormalLocal, fingerDirectionLocal).normalized;
+
         // Rig bones are scaled 100x (and mirrored); cancel that so held items keep their real size
         palm = new GameObject("Palm").transform;
         palm.SetParent(rightHand, false);
@@ -584,20 +629,27 @@ public class FirstPersonArms : MonoBehaviour
         // so the whole model never swings round or slides into view; only the swing, running bend
         // and relaxed wrist fade out
         UpdateCough(dt);
-        float hanging = 1f - Ease(coughWeight);
-        HangArm(leftModel, leftShoulder, leftHand, -1f, 1f, leftSwing * hanging);
+        UpdateInjectTiming(dt);
+        // The inject pose takes over the left arm from a coughing fit. While injecting, the arm rides
+        // on the camera like a carrying right arm instead of hanging from the body, so it stays in view
+        // looking up or down
+        float hanging = 1f - Mathf.Max(Ease(coughWeight), injectWeight);
+        HangArm(leftModel, leftShoulder, leftHand, -1f, 1f - injectWeight, leftSwing * hanging);
         BendElbow(leftUpperArm, leftForearm, leftHand, -1f, hanging, leftSwing);
         StraightenWrist(leftHand, leftForearm, leftKnuckle, hanging);
         CoughArm();
-        float fist = Ease(coughWeight); // coughing into a balled fist
+        InjectLeftArm();
+        float fist = Ease(coughWeight) * (1f - injectWeight); // coughing into a balled fist
         for (int i = 0; i < leftFingerJoints.Count; i++)
             leftFingerJoints[i].localRotation = Quaternion.Slerp(leftFingerJoints[i].localRotation, leftClosedRotations[i],
                 Mathf.Lerp(leftIsThumb[i] ? restingThumbCurl : restingCurl, 1f, fist));
 
         UpdateGrab(dt);
+        InjectRightArm();
         UpdateFingers(dt);
 
         UpdateHead(dt);
+        ShadowArms();
     }
 
     PickupItem HeldItem => grabPhase != GrabPhase.Reach && grabPhase != GrabPhase.Pull && hotbar != null ? hotbar.SelectedItem : null;
@@ -720,7 +772,9 @@ public class FirstPersonArms : MonoBehaviour
 
     void CloseHandOnItem()
     {
-        grabItem.CaptureHeldPose(palm); // the item stays exactly where the hand met it
+        if (grabItem.fixedGrip)
+            SnapToGrip(grabItem);
+        grabItem.CaptureHeldPose(palm); // the item stays exactly where the hand met it (or was snapped to)
         grabPhase = GrabPhase.Return;
         grabTimer = 0f;
         grabItem = null;
@@ -729,6 +783,18 @@ public class FirstPersonArms : MonoBehaviour
         onGrabbed?.Invoke(); // the hotbar puts the item in the hand now
         onGrabbed = null;
         lastSelected = hotbar.SelectedItem;
+    }
+
+    // For items with a fixed grip: turns the item to lie across the palm with its grip axis sticking
+    // out of the little-finger side, and moves it against the palm, ready for the fingers to close
+    // around it like a fist round a handle
+    void SnapToGrip(PickupItem item)
+    {
+        Vector3 across = rightHand.TransformVector(pinkySideLocal).normalized;
+        Vector3 normal = rightHand.TransformVector(palmNormalLocal).normalized;
+        Vector3 axis = item.transform.TransformDirection(item.gripAxis).normalized;
+        item.transform.rotation = Quaternion.FromToRotation(axis, across) * item.transform.rotation;
+        item.transform.position += palm.position + normal * item.gripRadius - item.WorldCenter;
     }
 
     // Where the palm should land: on the side of the item facing the hand, slid along the fingers'
@@ -760,14 +826,21 @@ public class FirstPersonArms : MonoBehaviour
     // points at `target`, and stretches it toward the target (up to maxReach), blended in by `amount`
     void ReachToward(Vector3 target, Vector3 faceToward, float amount)
     {
+        ReachToward(target, faceToward, amount, palmNormalLocal);
+    }
+
+    // The same, but turning the wrist so `handAxisLocal` (in rightHand's local space) faces `faceToward`
+    // instead of the palm
+    void ReachToward(Vector3 target, Vector3 faceToward, float amount, Vector3 handAxisLocal)
+    {
         if (amount <= 0f)
             return;
 
-        Vector3 palmNormal = rightHand.TransformVector(palmNormalLocal).normalized;
+        Vector3 handAxis = rightHand.TransformVector(handAxisLocal).normalized;
         Vector3 toFace = faceToward - palm.position;
         if (toFace.sqrMagnitude > 0.0001f)
         {
-            Quaternion turn = Quaternion.FromToRotation(palmNormal, toFace.normalized);
+            Quaternion turn = Quaternion.FromToRotation(handAxis, toFace.normalized);
             rightHand.rotation = Quaternion.Slerp(Quaternion.identity, turn, amount * wristAlign) * rightHand.rotation;
         }
 
@@ -877,7 +950,7 @@ public class FirstPersonArms : MonoBehaviour
     // and it jabs back a little toward the mouth as well.
     void CoughArm()
     {
-        float weight = Ease(coughWeight);
+        float weight = Ease(coughWeight) * (1f - injectWeight);
         if (weight <= 0f || leftUpperArm == null || leftForearm == null || leftKnuckle == null)
             return;
 
@@ -895,6 +968,118 @@ public class FirstPersonArms : MonoBehaviour
         Vector3 across = cam.rotation * new Vector3(0.9f, 0.25f, -0.1f);
         Quaternion turn = Quaternion.FromToRotation(knuckles, across);
         leftHand.rotation = Quaternion.Slerp(Quaternion.identity, turn, weight) * leftHand.rotation;
+    }
+
+    // ---------- Inject ----------
+
+    // Called by the hotbar when the player uses the held item. `injected` runs the moment the
+    // needle goes in, `done` once the arms are back down
+    void PlayInject(PickupItem item, System.Action injected, System.Action done)
+    {
+        onInjected = injected;
+        onInjectDone = done;
+        injectPhase = InjectPhase.Raise;
+        injectTimer = 0f;
+    }
+
+    // Raise: both arms come up, the palm waiting above the forearm. Jab: it drives in, speeding up.
+    // Hold: it stays pressed in while the shot empties. Return: both arms go back down
+    void UpdateInjectTiming(float dt)
+    {
+        if (injectPhase == InjectPhase.None)
+        {
+            injectWeight = 0f;
+            return;
+        }
+
+        injectTimer += dt;
+        switch (injectPhase)
+        {
+            case InjectPhase.Raise:
+            {
+                float t = Mathf.Clamp01(injectTimer / injectRaiseTime);
+                injectWeight = Ease(t);
+                injectGap = injectWindup;
+                if (t >= 1f)
+                    NextInjectPhase(InjectPhase.Jab);
+                break;
+            }
+            case InjectPhase.Jab:
+            {
+                float t = Mathf.Clamp01(injectTimer / injectJabTime);
+                injectWeight = 1f;
+                injectGap = Mathf.Lerp(injectWindup, injectContactGap, t * t);
+                if (t >= 1f)
+                {
+                    // A small flinch as the needle goes in, on the same spring as a cough
+                    coughJoltVelocity += 14f * injectFlinch;
+                    coughRoll = 0f;
+                    onInjected?.Invoke();
+                    onInjected = null;
+                    NextInjectPhase(InjectPhase.Hold);
+                }
+                break;
+            }
+            case InjectPhase.Hold:
+            {
+                injectWeight = 1f;
+                injectGap = injectContactGap;
+                if (injectTimer >= injectHoldTime)
+                    NextInjectPhase(InjectPhase.Return);
+                break;
+            }
+            case InjectPhase.Return:
+            {
+                float t = Mathf.Clamp01(injectTimer / injectReturnTime);
+                injectWeight = 1f - Ease(t);
+                injectGap = Mathf.Lerp(injectContactGap, injectWindup, Ease(t));
+                if (t >= 1f)
+                {
+                    injectPhase = InjectPhase.None;
+                    injectWeight = 0f;
+                    onInjectDone?.Invoke(); // the hotbar uses up the item now
+                    onInjectDone = null;
+                }
+                break;
+            }
+        }
+    }
+
+    void NextInjectPhase(InjectPhase phase)
+    {
+        injectPhase = phase;
+        injectTimer = 0f;
+    }
+
+    // Holds the left forearm out across the front of the body, inside of the arm facing up,
+    // elbow down and out to the side
+    void InjectLeftArm()
+    {
+        if (injectWeight <= 0f || leftUpperArm == null || leftForearm == null || leftKnuckle == null)
+            return;
+
+        Vector3 wrist = cam.position + cam.rotation * injectWrist;
+        Vector3 elbowHint = wrist + cam.rotation * new Vector3(-0.4f, -0.4f, -0.1f);
+        TwoBoneIK(leftUpperArm, leftForearm, leftHand, wrist, elbowHint, injectWeight);
+        leftModel.position += Vector3.ClampMagnitude(wrist - leftHand.position, coughMaxSlide) * injectWeight;
+
+        // Hand carries on forward and a little to the right, so the forearm lies across the view
+        Vector3 knuckles = leftKnuckle.position - leftHand.position;
+        Vector3 ahead = cam.rotation * new Vector3(0.45f, 0.05f, 0.9f);
+        Quaternion turn = Quaternion.FromToRotation(knuckles, ahead);
+        leftHand.rotation = Quaternion.Slerp(Quaternion.identity, turn, injectWeight) * leftHand.rotation;
+    }
+
+    // Brings the right fist down onto the left forearm from above and to the right, little-finger side
+    // first, so a shot held in a fixed grip goes in needle first
+    void InjectRightArm()
+    {
+        if (injectWeight <= 0f || leftForearm == null)
+            return;
+
+        Vector3 contact = Vector3.Lerp(leftForearm.position, leftHand.position, 0.6f);
+        Vector3 approach = (cam.rotation * new Vector3(0.5f, 0.8f, -0.2f)).normalized;
+        ReachToward(contact + approach * injectGap, contact, injectWeight, pinkySideLocal);
     }
 
     // Bends a shoulder-elbow-wrist chain so the wrist lands on `target`, with the elbow bending
@@ -926,6 +1111,41 @@ public class FirstPersonArms : MonoBehaviour
 
         upper.localRotation = Quaternion.Slerp(upperBefore, upper.localRotation, weight);
         lower.localRotation = Quaternion.Slerp(lowerBefore, lower.localRotation, weight);
+    }
+
+    // ---------- Shadow ----------
+
+    // The body's shadow copy plays the walk with its arms down, so while a hand is up (holding,
+    // grabbing, coughing or injecting) bend the shadow's arm so its wrist goes where the on-screen
+    // wrist is. A held item's shadow then sits in the shadow's hand instead of floating beside it
+    void ShadowArms()
+    {
+        if (!hasBody)
+            return;
+
+        float right = Ease(1f - (1f - holdWeight) * (1f - currentReach));
+        float left = Mathf.Max(Ease(coughWeight), injectWeight);
+        ShadowArm(HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand, rightHand, 1f, right);
+        ShadowArm(HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand, leftHand, -1f, left);
+    }
+
+    // side: +1 for the right arm, -1 for the left
+    void ShadowArm(HumanBodyBones upperBone, HumanBodyBones lowerBone, HumanBodyBones handBone, Transform screenHand, float side, float weight)
+    {
+        if (weight <= 0f || screenHand == null)
+            return;
+
+        Transform upper = fullBody.ShadowBone(upperBone);
+        Transform lower = fullBody.ShadowBone(lowerBone);
+        Transform hand = fullBody.ShadowBone(handBone);
+        if (upper == null || lower == null || hand == null)
+            return;
+
+        // Elbow down, out to the side and a little back, like the on-screen arms
+        Transform facing = fullBody.Torso;
+        Vector3 wrist = screenHand.position;
+        Vector3 elbowHint = wrist + facing.right * (side * 0.3f) - facing.up * 0.4f - facing.forward * 0.1f;
+        TwoBoneIK(upper, lower, hand, wrist, elbowHint, weight);
     }
 
     // ---------- Fingers ----------
@@ -1068,7 +1288,7 @@ public class FirstPersonArms : MonoBehaviour
         if (cameraRoot == null)
             return;
 
-        float strength = Mathf.Clamp01(bobStrength);
+        float strength = Mathf.Clamp01(bobStrength) * headBobAmount;
         Vector3 size = Vector3.Lerp(headBobWalk, headBobRun, runBlend) * strength;
         Vector2 tilt = Vector2.Lerp(headTiltWalk, headTiltRun, runBlend) * strength;
 
@@ -1157,6 +1377,11 @@ public class FirstPersonArms : MonoBehaviour
     // overshoots a little and settles. Turning sharply while strafing tilts it sideways.
     void UpdateLean(float dt)
     {
+        if (!startStopLean)
+        {
+            lean = leanVelocity = Vector2.zero;
+            return;
+        }
         if (body == null)
             return;
 

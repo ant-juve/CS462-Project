@@ -139,11 +139,13 @@ namespace StarterAssets
 
 		private void CameraRotation()
 		{
-			// if there is an input
-			if (_input.look.sqrMagnitude >= _threshold)
+			// if there is an input. The threshold only filters gamepad stick drift: mouse input is
+			// scaled down a lot, so a slow mouse movement falls under it and the view wouldn't turn
+			bool mouse = IsCurrentDeviceMouse;
+			if (mouse ? _input.look.sqrMagnitude > 0f : _input.look.sqrMagnitude >= _threshold)
 			{
 				//Don't multiply mouse input by Time.deltaTime
-				float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
+				float deltaTimeMultiplier = mouse ? 1.0f : Time.deltaTime;
 				
 				_cinemachineTargetPitch += _input.look.y * RotationSpeed * deltaTimeMultiplier;
 				_rotationVelocity = _input.look.x * RotationSpeed * deltaTimeMultiplier;

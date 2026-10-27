@@ -11,7 +11,8 @@ using UnityEngine.Serialization;
 //   - a visible one with the head and arms hidden (the camera is in the head, and the arms are
 //     drawn by FirstPersonArms), which casts no shadow
 //   - a shadow-only one with everything, so the shadow on the floor has a head and arms. Only the
-//     visible copy is animated; the shadow copies its body bones (fingers don't show in a shadow)
+//     visible copy is animated; the shadow copies its body bones (fingers don't show in a shadow).
+//     FirstPersonArms then bends the shadow's arms up to match the on-screen hands (ShadowBone)
 //
 // Legs are animated in code, like the arms: idle, walk, run and strafe clips are blended from the
 // player's real speed and direction, and advance by distance travelled (one cycle per stride), so
@@ -92,6 +93,7 @@ public class FirstPersonBody : MonoBehaviour
     private FirstPersonController controller;
     private Rig visible;
     private Transform shadowRoot;
+    private Animator shadowAnimator;
     private Transform[] poseFrom; // visible copy's body bones, and the shadow copy's matching ones
     private Transform[] poseTo;
     private Transform leftShoulder;
@@ -137,7 +139,7 @@ public class FirstPersonBody : MonoBehaviour
         visible = new Rig(Instantiate(model, transform), clips, "Body");
         GameObject shadowCopy = Instantiate(model, transform);
         shadowCopy.name = "Body (Shadow)";
-        Animator shadowAnimator = shadowCopy.GetComponent<Animator>();
+        shadowAnimator = shadowCopy.GetComponent<Animator>();
         shadowRoot = shadowCopy.transform;
 
         // Scale the model so its eyes are at the camera's height
@@ -228,6 +230,13 @@ public class FirstPersonBody : MonoBehaviour
     public Vector3 ShoulderPosition(float side)
     {
         return (side > 0f ? rightShoulder : leftShoulder).position;
+    }
+
+    // A bone of the shadow-only copy, for scripts that run after the body is posed each frame to
+    // adjust what the shadow shows
+    public Transform ShadowBone(HumanBodyBones bone)
+    {
+        return shadowAnimator != null ? shadowAnimator.GetBoneTransform(bone) : null;
     }
 
     // Runs before the controller turns the player for this frame, so the velocity is measured
