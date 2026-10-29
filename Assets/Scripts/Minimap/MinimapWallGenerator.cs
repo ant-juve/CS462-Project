@@ -7,8 +7,7 @@ public class MinimapWallGenerator
     [MenuItem("Tools/Generate Minimap Walls")]
     public static void GenerateWalls()
     {
-        GameObject minimapParent =
-            GameObject.Find("MinimapGeometry");
+        GameObject minimapParent = GameObject.Find("MinimapGeometry");
 
         if (minimapParent == null)
         {
@@ -16,61 +15,79 @@ public class MinimapWallGenerator
             return;
         }
 
-        GameObject[] selectedObjects =
-            Selection.gameObjects;
+        Material wallMaterial = AssetDatabase.LoadAssetAtPath<Material>(
+            "Assets/Minimap/MinimapWall.mat"
+        );
 
+        if (wallMaterial == null)
+        {
+            Debug.LogError("MinimapWall material was not found!");
+            return;
+        }
+
+        int minimapLayer = LayerMask.NameToLayer("MiniMap");
+
+        if (minimapLayer == -1)
+        {
+            Debug.LogError("MiniMap layer was not found!");
+            return;
+        }
+
+        GameObject[] selectedObjects = Selection.gameObjects;
         int count = 0;
 
         foreach (GameObject selected in selectedObjects)
         {
-            MeshFilter[] meshes =
-                selected.GetComponentsInChildren<MeshFilter>(true);
+            BoxCollider[] colliders =
+                selected.GetComponentsInChildren<BoxCollider>(true);
 
-            foreach (MeshFilter mesh in meshes)
+            foreach (BoxCollider wall in colliders)
             {
-                // Only include objects with Wall in their name.
-                if (!mesh.gameObject.name.ToLower().Contains("wall"))
-                    continue;
+                string objectName = wall.gameObject.name;
 
-                if (mesh.sharedMesh == null)
+                if (!objectName.StartsWith("Wall_") &&
+                    !objectName.StartsWith("Collider_"))
+                {
                     continue;
+                }
 
-                GameObject copy = new GameObject(
-                    "Minimap_" + mesh.gameObject.name
-                );
+                GameObject cube =
+                    GameObject.CreatePrimitive(PrimitiveType.Cube);
 
                 Undo.RegisterCreatedObjectUndo(
-                    copy, "Generate Minimap Walls"
+                    cube, "Generate Minimap Walls"
                 );
 
-                copy.transform.SetParent(
-                    minimapParent.transform, false
+                cube.name = "Minimap_" + objectName;
+
+                cube.transform.SetParent(minimapParent.transform);
+
+                cube.transform.position =
+                    wall.transform.TransformPoint(wall.center);
+
+                cube.transform.rotation = wall.transform.rotation;
+
+                Vector3 scale = wall.transform.lossyScale;
+
+                // Set every minimap wall's X scale to 1.
+                // Keep the original Y and Z dimensions.
+                cube.transform.localScale = new Vector3(
+                    1f,
+                    wall.size.y * Mathf.Abs(scale.y),
+                    wall.size.z * Mathf.Abs(scale.z)
                 );
 
-                copy.transform.position =
-                    mesh.transform.position;
+                cube.GetComponent<MeshRenderer>().sharedMaterial =
+                    wallMaterial;
 
-                copy.transform.rotation =
-                    mesh.transform.rotation;
+                Object.DestroyImmediate(cube.GetComponent<Collider>());
 
-                copy.transform.localScale =
-                    mesh.transform.lossyScale;
-
-                MeshFilter newFilter =
-                    copy.AddComponent<MeshFilter>();
-
-                newFilter.sharedMesh = mesh.sharedMesh;
-
-                MeshRenderer newRenderer =
-                    copy.AddComponent<MeshRenderer>();
-
-                newRenderer.sharedMaterials =
-                    mesh.GetComponent<MeshRenderer>()?.sharedMaterials;
+                cube.layer = minimapLayer;
 
                 count++;
             }
         }
 
-        Debug.Log("Generated " + count + " minimap wall meshes.");
+        Debug.Log("Generated " + count + " minimap walls.");
     }
 }
