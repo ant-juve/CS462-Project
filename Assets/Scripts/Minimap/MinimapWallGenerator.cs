@@ -7,11 +7,12 @@ public class MinimapWallGenerator
     [MenuItem("Tools/Generate Minimap Walls")]
     public static void GenerateWalls()
     {
-        GameObject minimapParent = GameObject.Find("MinimapGeometry");
+        GameObject level = GameObject.Find("_Level");
+        GameObject minimapGeometry = GameObject.Find("MinimapGeometry");
 
-        if (minimapParent == null)
+        if (level == null || minimapGeometry == null)
         {
-            Debug.LogError("MinimapGeometry was not found!");
+            Debug.LogError("_Level or MinimapGeometry was not found!");
             return;
         }
 
@@ -33,13 +34,36 @@ public class MinimapWallGenerator
             return;
         }
 
-        GameObject[] selectedObjects = Selection.gameObjects;
-        int count = 0;
+        string[] sourceNames = { "Hallways", "Map2", "Map3", "Map4" };
 
-        foreach (GameObject selected in selectedObjects)
+        for (int i = 0; i < sourceNames.Length; i++)
         {
+            Transform source = level.transform.Find(sourceNames[i]);
+
+            if (source == null)
+            {
+                Debug.LogWarning(sourceNames[i] + " was not found.");
+                continue;
+            }
+
+            string groupName = "Map" + (i + 1) + "Walls";
+
+            Transform oldGroup = minimapGeometry.transform.Find(groupName);
+
+            if (oldGroup != null)
+            {
+                Undo.DestroyObjectImmediate(oldGroup.gameObject);
+            }
+
+            GameObject group = new GameObject(groupName);
+            Undo.RegisterCreatedObjectUndo(group, "Generate Minimap Walls");
+            group.transform.SetParent(minimapGeometry.transform, false);
+            group.layer = minimapLayer;
+
+            int count = 0;
+
             BoxCollider[] colliders =
-                selected.GetComponentsInChildren<BoxCollider>(true);
+                source.GetComponentsInChildren<BoxCollider>(true);
 
             foreach (BoxCollider wall in colliders)
             {
@@ -54,13 +78,10 @@ public class MinimapWallGenerator
                 GameObject cube =
                     GameObject.CreatePrimitive(PrimitiveType.Cube);
 
-                Undo.RegisterCreatedObjectUndo(
-                    cube, "Generate Minimap Walls"
-                );
+                Undo.RegisterCreatedObjectUndo(cube, "Generate Minimap Wall");
 
                 cube.name = "Minimap_" + objectName;
-
-                cube.transform.SetParent(minimapParent.transform);
+                cube.transform.SetParent(group.transform);
 
                 cube.transform.position =
                     wall.transform.TransformPoint(wall.center);
@@ -69,10 +90,8 @@ public class MinimapWallGenerator
 
                 Vector3 scale = wall.transform.lossyScale;
 
-                // Set every minimap wall's X scale to 1.
-                // Keep the original Y and Z dimensions.
                 cube.transform.localScale = new Vector3(
-                    1f,
+                    Mathf.Max(1f, wall.size.x * Mathf.Abs(scale.x)),
                     wall.size.y * Mathf.Abs(scale.y),
                     wall.size.z * Mathf.Abs(scale.z)
                 );
@@ -86,8 +105,8 @@ public class MinimapWallGenerator
 
                 count++;
             }
-        }
 
-        Debug.Log("Generated " + count + " minimap walls.");
+            Debug.Log(groupName + ": Generated " + count + " walls.");
+        }
     }
 }
