@@ -2,13 +2,12 @@ using StarterAssets;
 using UnityEngine;
 
 // Connects the Starter Assets first-person controller to the rest of the game:
-// the pause menu, the sensitivity setting and the hotbar.
+// the pause menu, the sensitivity setting, the hotbar, the EPD and the health bar.
 // Goes on the PlayerCapsule alongside FirstPersonController.
 [RequireComponent(typeof(FirstPersonController))]
 public class FirstPersonPlayer : MonoBehaviour
 {
     // Starter Assets scales mouse movement by 0.05, the old Input Manager axes by 0.1.
-    // This keeps a given sensitivity value feeling the same as it did with the old player.
     private const float SensitivityToRotationSpeed = 2f;
 
     [Header("Size")]
@@ -35,6 +34,27 @@ public class FirstPersonPlayer : MonoBehaviour
 
         if (GetComponent<Hotbar>() == null)
             gameObject.AddComponent<Hotbar>();
+        if (GetComponent<Dosimeter>() == null)
+            gameObject.AddComponent<Dosimeter>();
+        if (GetComponent<EPDDisplay>() == null)
+            gameObject.AddComponent<EPDDisplay>();
+        if (GetComponent<PlayerHealth>() == null)
+            gameObject.AddComponent<PlayerHealth>();
+        if (GetComponent<HealthBar>() == null)
+            gameObject.AddComponent<HealthBar>();
+        if (GetComponentInChildren<GeigerCounter>() == null)
+        {
+            // Own child object so its AudioSource isn't shared with the footsteps
+            GameObject geiger = new GameObject("GeigerCounter");
+            geiger.transform.SetParent(transform, false);
+            geiger.AddComponent<GeigerCounter>();
+        }
+        if (GetComponentInChildren<PlayerCough>() == null)
+        {
+            GameObject cough = new GameObject("Cough");
+            cough.transform.SetParent(transform, false);
+            cough.AddComponent<PlayerCough>();
+        }
     }
 
     void ApplySize()

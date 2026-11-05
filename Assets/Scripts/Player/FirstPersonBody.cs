@@ -11,7 +11,8 @@ using UnityEngine.Serialization;
 //   - a visible one with the head and arms hidden (the camera is in the head, and the arms are
 //     drawn by FirstPersonArms), which casts no shadow
 //   - a shadow-only one with everything, so the shadow on the floor has a head and arms. Only the
-//     visible copy is animated; the shadow copies its body bones (fingers don't show in a shadow)
+//     visible copy is animated; the shadow copies its body bones (fingers don't show in a shadow).
+//     FirstPersonArms then bends the shadow's arms up to match the on-screen hands (ShadowBone)
 //
 // Legs are animated in code, like the arms: idle, walk, run and strafe clips are blended from the
 // player's real speed and direction, and advance by distance travelled (one cycle per stride), so
@@ -92,6 +93,7 @@ public class FirstPersonBody : MonoBehaviour
     private FirstPersonController controller;
     private Rig visible;
     private Transform shadowRoot;
+    private Animator shadowAnimator;
     private Transform[] poseFrom; // visible copy's body bones, and the shadow copy's matching ones
     private Transform[] poseTo;
     private Transform leftShoulder;
@@ -99,6 +101,8 @@ public class FirstPersonBody : MonoBehaviour
 
     private float scale = 1f;
     private float restZ;
+    private Transform headBone;
+    private Vector3 restHead; // where the head bone sits standing, relative to the player, facing the torso's way
     private float torsoYaw;     // world yaw the body faces
     private bool catchingUp;
     private bool movingBack; // playing the leg clips in reverse
@@ -135,7 +139,7 @@ public class FirstPersonBody : MonoBehaviour
         visible = new Rig(Instantiate(model, transform), clips, "Body");
         GameObject shadowCopy = Instantiate(model, transform);
         shadowCopy.name = "Body (Shadow)";
-        Animator shadowAnimator = shadowCopy.GetComponent<Animator>();
+        shadowAnimator = shadowCopy.GetComponent<Animator>();
         shadowRoot = shadowCopy.transform;
 
         // Scale the model so its eyes are at the camera's height
@@ -150,6 +154,8 @@ public class FirstPersonBody : MonoBehaviour
         float headForward = transform.InverseTransformPoint(head.position).z * scale;
 
         restZ = -headForward - bodyBack;
+        headBone = head;
+        restHead = new Vector3(0f, headHeight * scale, -bodyBack);
         foreach (Transform t in new[] { visible.animator.transform, shadowRoot })
         {
             t.localScale = Vector3.one * scale;
@@ -226,6 +232,13 @@ public class FirstPersonBody : MonoBehaviour
         return (side > 0f ? rightShoulder : leftShoulder).position;
     }
 
+    // A bone of the shadow-only copy, for scripts that run after the body is posed each frame to
+    // adjust what the shadow shows
+    public Transform ShadowBone(HumanBodyBones bone)
+    {
+        return shadowAnimator != null ? shadowAnimator.GetBoneTransform(bone) : null;
+    }
+
     // Runs before the controller turns the player for this frame, so the velocity is measured
     // against the facing it was moved with
     void LateUpdate()
@@ -254,8 +267,27 @@ public class FirstPersonBody : MonoBehaviour
         shadowRoot.SetLocalPositionAndRotation(position, offset);
 
         visible.Pose(weights, times);
+        Vector3 placed = position + offset * HeadCorrection(offset);
+        visible.animator.transform.localPosition = placed;
+        shadowRoot.localPosition = placed;
         for (int i = 0; i < poseFrom.Length; i++)
             poseTo[i].SetLocalPositionAndRotation(poseFrom[i].localPosition, poseFrom[i].localRotation);
+    }
+
+    // The jump clip lifts the whole body off the ground and throws the chest forward, but the player
+    // capsule already does the real jumping, so the clip's body would rise a second time and bring
+    // the neck and shoulders up into the first-person view. This works out how far to move the body
+    // so the head never rises above, or (while jumping) moves ahead of, where it sits standing.
+    // Facing the torso's way; `offset` is the torso's turn from the player's facing.
+    Vector3 HeadCorrection(Quaternion offset)
+    {
+        if (headBone == null)
+            return Vector3.zero;
+
+        Vector3 head = Quaternion.Inverse(offset) * transform.InverseTransformPoint(headBone.position);
+        float down = Mathf.Min(0f, restHead.y - head.y);
+        float back = Mathf.Min(0f, restHead.z - head.z) * weights[Jump]; // walking and running keep their lean
+        return new Vector3(0f, down, back);
     }
 
     // Moving: the body faces where you're looking. Standing: it stays put until your head has turned
@@ -315,7 +347,19 @@ public class FirstPersonBody : MonoBehaviour
         // so pace the cycle by forward + sideways speed, which makes up exactly that difference and
         // keeps the planted foot still on diagonals. Straight lines are unaffected.
         if (grounded && stride > 0.01f)
-            StridePhase = Mathf.Repeat(StridePhase + (forward + side) / stride * dt, 1f);
+        {
+            float rate = (forward + side) / stride; // strides per second
+            // There's no sprinting side-step, only a walking one, so sprinting sideways would play it
+            // several times faster than it was made for and the legs (and arms, which follow them)
+            // turn into a blur. Sprinting in any direction steps at the forward sprint's pace instead:
+            // longer side-steps with a little slide
+            float sprinting = controller != null && controller.SprintSpeed > controller.MoveSpeed
+                ? Mathf.Clamp01((speed - controller.MoveSpeed) / (controller.SprintSpeed - controller.MoveSpeed))
+                : 0f;
+            float forwardSprintRate = speed / Mathf.Max(runStride, 0.01f);
+            rate = Mathf.Lerp(rate, forwardSprintRate, sprinting);
+            StridePhase = Mathf.Repeat(StridePhase + rate * dt, 1f);
+        }
 
         // A foot lands at stride 0 (left) and 0.5 (right)
         if (grounded && moving > 0.5f && (CrossedStep(before, StridePhase, 0f) || CrossedStep(before, StridePhase, 0.5f)))

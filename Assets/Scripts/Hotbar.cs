@@ -5,6 +5,7 @@ using UnityEngine.UI;
 // Add this to the Player. It builds its own UI at runtime, so no canvas setup is needed.
 //   E          pick up the item you're looking at
 //   Q          drop the selected item
+//   Left click use the selected item, if it has an IUsable component
 //   1-5/scroll select a slot
 public class Hotbar : MonoBehaviour
 {
@@ -13,6 +14,7 @@ public class Hotbar : MonoBehaviour
     public float pickupRange = 2.0f; // from the eyes; covers the floor about 1m ahead, within a bend and a reach
     public KeyCode pickupKey = KeyCode.E;
     public KeyCode dropKey = KeyCode.Q;
+    public KeyCode useKey = KeyCode.Mouse0;
     public float dropDistance = 1.5f;
 
     [Header("Held Item")]
@@ -26,6 +28,13 @@ public class Hotbar : MonoBehaviour
     public Color slotColor = new Color(0f, 0f, 0f, 0.55f);
     public Color selectedColor = new Color(0.3f, 0.8f, 1f, 1f);
     public Color borderColor = new Color(1f, 1f, 1f, 0.25f);
+
+    [Header("Crosshair")]
+    [Tooltip("Size of the dot in the middle of the screen, in pixels at 1080p: normally, and when looking at something you can pick up")]
+    public float crosshairSize = 6f;
+    public float crosshairGrabSize = 11f;
+    public Color crosshairColor = new Color(1f, 1f, 1f, 0.6f);
+    public Color crosshairGrabColor = Color.white;
 
     private readonly PickupItem[] slots = new PickupItem[SlotCount];
     private int selectedIndex = 0;
@@ -42,6 +51,8 @@ public class Hotbar : MonoBehaviour
     private TextMeshProUGUI[] slotLabels;
     private TextMeshProUGUI selectedNameText;
     private TextMeshProUGUI promptText;
+    private Image crosshair;
+    private float crosshairGrab; // 0 = normal dot, 1 = over something you can pick up, eased between
 
     public PickupItem SelectedItem => slots[selectedIndex];
 
@@ -49,6 +60,11 @@ public class Hotbar : MonoBehaviour
     // when the hand reaches it; the item only goes into the hotbar at that point.
     public System.Action<PickupItem, System.Action> GrabAnimation;
     public bool IsGrabbing { get; private set; }
+
+    // Set by first-person arms to animate using the held item. Called with the item, a callback
+    // to run at the moment of contact (the needle goes in), and one to run when the arms are done
+    public System.Action<PickupItem, System.Action, System.Action> UseAnimation;
+    public bool IsUsing { get; private set; }
 
     void Start()
     {
@@ -90,10 +106,10 @@ public class Hotbar : MonoBehaviour
             return;
         }
 
-        if (IsGrabbing)
+        if (IsGrabbing || IsUsing)
         {
             SetPrompt("");
-            return; // let the grab finish before switching, dropping or grabbing again
+            return; // let the grab or use finish before switching, dropping or grabbing again
         }
 
         HandleSlotSelection();
@@ -104,6 +120,9 @@ public class Hotbar : MonoBehaviour
 
         if (Input.GetKeyDown(dropKey))
             DropSelected();
+
+        if (Input.GetKeyDown(useKey))
+            TryUseSelected();
     }
 
     void HandleSlotSelection()
@@ -144,6 +163,17 @@ public class Hotbar : MonoBehaviour
             SetPrompt("Hotbar full");
         else
             SetPrompt(pickupPrompt);
+
+        UpdateCrosshair(lookedAtItem != null && FirstEmptySlot() >= 0);
+    }
+
+    // The dot grows and brightens over something you can pick up
+    void UpdateCrosshair(bool canGrab)
+    {
+        crosshairGrab = Mathf.MoveTowards(crosshairGrab, canGrab ? 1f : 0f, Time.deltaTime * 10f);
+        float size = Mathf.Lerp(crosshairSize, crosshairGrabSize, crosshairGrab);
+        crosshair.rectTransform.sizeDelta = new Vector2(size, size);
+        crosshair.color = Color.Lerp(crosshairColor, crosshairGrabColor, crosshairGrab);
     }
 
     // The nearest thing in front of the eyes, ignoring the player's own colliders (the camera can sit
@@ -213,10 +243,57 @@ public class Hotbar : MonoBehaviour
         OnSlotsChanged();
     }
 
+    // Returns false if nothing usable is selected, the item refuses, or the hands are busy
+    public bool TryUseSelected()
+    {
+        PickupItem item = slots[selectedIndex];
+        IUsable usable = item != null ? item.GetComponent<IUsable>() : null;
+        if (usable == null || IsGrabbing || IsUsing || !usable.CanUse(gameObject))
+            return false;
+
+        if (UseAnimation == null)
+        {
+            usable.Use(gameObject);
+            FinishUse(item, usable);
+            return true;
+        }
+
+        // Slot switching is blocked while using, so the item stays in this slot until it's done
+        IsUsing = true;
+        UseAnimation(item,
+            () => usable.Use(gameObject),
+            () =>
+            {
+                IsUsing = false;
+                FinishUse(item, usable);
+            });
+        return true;
+    }
+
+    void FinishUse(PickupItem item, IUsable usable)
+    {
+        if (usable.ConsumeOnUse)
+            RemoveItem(item);
+    }
+
+    // Takes the item out of the hotbar and destroys it (used up, not dropped)
+    public void RemoveItem(PickupItem item)
+    {
+        for (int i = 0; i < SlotCount; i++)
+        {
+            if (slots[i] != item)
+                continue;
+            slots[i] = null;
+            Destroy(item.gameObject);
+            OnSlotsChanged();
+            return;
+        }
+    }
+
     public void DropSelected()
     {
         PickupItem item = slots[selectedIndex];
-        if (item == null || IsGrabbing)
+        if (item == null || IsGrabbing || IsUsing)
             return;
 
         slots[selectedIndex] = null;
@@ -275,7 +352,17 @@ public class Hotbar : MonoBehaviour
             slotLabels[i].text = item != null && item.icon == null ? item.itemName : "";
         }
 
-        selectedNameText.text = SelectedItem != null ? SelectedItem.itemName : "";
+        selectedNameText.text = SelectedItem != null ? SelectedItem.itemName + UseHint(SelectedItem) : "";
+    }
+
+    // " [Click] Inject" for usable items, nothing otherwise
+    string UseHint(PickupItem item)
+    {
+        IUsable usable = item.GetComponent<IUsable>();
+        if (usable == null)
+            return "";
+        string key = useKey == KeyCode.Mouse0 ? "Click" : useKey.ToString();
+        return $"  <size=70%><color=#FFFFFFAA>[{key}] {usable.UseVerb}</color></size>";
     }
 
     // ---------- UI construction ----------
@@ -347,6 +434,33 @@ public class Hotbar : MonoBehaviour
         promptRect.anchoredPosition = new Vector2(0f, -60f);
         promptRect.sizeDelta = new Vector2(600f, 40f);
         promptText = CreateText(promptRect, 24f, TextAlignmentOptions.Center);
+
+        // Crosshair dot, dead center where the pickup raycast goes
+        RectTransform dotRect = CreateRect("Crosshair", canvasObject.transform);
+        dotRect.anchorMin = dotRect.anchorMax = dotRect.pivot = new Vector2(0.5f, 0.5f);
+        crosshair = dotRect.gameObject.AddComponent<Image>();
+        crosshair.sprite = CircleSprite();
+        crosshair.raycastTarget = false;
+        UpdateCrosshair(false);
+    }
+
+    // A soft-edged white circle, made once so no image asset is needed
+    static Sprite CircleSprite()
+    {
+        const int Size = 64;
+        Texture2D texture = new Texture2D(Size, Size, TextureFormat.RGBA32, false);
+        texture.wrapMode = TextureWrapMode.Clamp;
+        float radius = Size * 0.5f - 1f;
+        for (int y = 0; y < Size; y++)
+        {
+            for (int x = 0; x < Size; x++)
+            {
+                float distance = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(Size * 0.5f, Size * 0.5f));
+                texture.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(radius - distance + 0.5f)));
+            }
+        }
+        texture.Apply();
+        return Sprite.Create(texture, new Rect(0f, 0f, Size, Size), new Vector2(0.5f, 0.5f));
     }
 
     static RectTransform CreateRect(string name, Transform parent)
