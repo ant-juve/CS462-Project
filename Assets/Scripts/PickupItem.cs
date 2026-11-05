@@ -8,6 +8,15 @@ public class PickupItem : MonoBehaviour
     public string itemName = "Item";
     public Sprite icon;
 
+    [Header("Grip")]
+    [Tooltip("Off: held exactly where the hand closed on it. On: turned and moved into a fist grip, " +
+             "for things that have to be held a certain way, like a shot")]
+    public bool fixedGrip = false;
+    [Tooltip("Direction (in the item's own space) that sticks out of the little-finger side of the fist")]
+    public Vector3 gripAxis = Vector3.down;
+    [Tooltip("Distance from the palm to the line through the item's center, in meters. About its radius")]
+    public float gripRadius = 0.02f;
+
     private Rigidbody body;
     private Collider[] colliders;
     private bool wasKinematic;
