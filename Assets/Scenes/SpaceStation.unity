@@ -89237,8 +89237,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2cd3d0487f7364ccbb28b85271563fca, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FacilityBlackout
-  minWaitTime: 5
-  maxWaitTime: 10
+  minWaitTime: 30
+  maxWaitTime: 60
   minBlackoutDuration: 3
   maxBlackoutDuration: 6
   flickerBeforeBlackout: 1
