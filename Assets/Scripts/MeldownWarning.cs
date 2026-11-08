@@ -5,7 +5,11 @@ using UnityEngine.InputSystem;
 
 public class MeltdownWarning : MonoBehaviour
 {
-    [Header("Warning UI")]
+    [Header("Photosensitivity Warning")]
+    [SerializeField] private GameObject epilepsyWarningPanel;
+    [SerializeField] private TMP_Text epilepsyContinuePrompt;
+
+    [Header("Meltdown Warning")]
     [SerializeField] private GameObject warningPanel;
     [SerializeField] private TMP_Text continuePrompt;
 
@@ -13,88 +17,152 @@ public class MeltdownWarning : MonoBehaviour
     [SerializeField] private MonoBehaviour firstPersonController;
     [SerializeField] private PlayerInput playerInput;
 
+    [Header("Facility Lighting")]
+    [SerializeField] private FacilityBlackout facilityBlackout;
+
     [Header("Warning Settings")]
     [SerializeField] private float blinkSpeed = 2f;
 
-    private bool warningActive;
+    private enum WarningState
+    {
+        Epilepsy,
+        Meltdown,
+        Gameplay
+    }
+
+    private WarningState currentState;
+
     private bool controllerWasEnabled;
     private bool inputWasEnabled;
+    private bool lightingWasEnabled;
 
     void Start()
     {
-        ShowWarning();
-    }
-
-    void Update()
-    {
-        if (!warningActive)
-            return;
-
-        // Make the acknowledgment prompt blink.
-        if (continuePrompt != null)
-        {
-            Color color = continuePrompt.color;
-
-            color.a = Mathf.PingPong(
-                Time.unscaledTime * blinkSpeed, 1f
-            );
-
-            continuePrompt.color = color;
-        }
-
-        // Check for the E key using the new Input System.
-        if (Keyboard.current != null &&
-            Keyboard.current.eKey.wasPressedThisFrame)
-        {
-            DismissWarning();
-        }
-    }
-
-    public void ShowWarning()
-    {
-        warningActive = true;
-
-        if (warningPanel != null)
-            warningPanel.SetActive(true);
-
-        // Disable movement and camera controls.
+        // Remember the original component states.
         if (firstPersonController != null)
-        {
-            controllerWasEnabled =
-                firstPersonController.enabled;
+            controllerWasEnabled = firstPersonController.enabled;
 
-            firstPersonController.enabled = false;
-        }
-
-        // Disable gameplay input.
         if (playerInput != null)
-        {
             inputWasEnabled = playerInput.enabled;
+
+        if (facilityBlackout != null)
+            lightingWasEnabled = facilityBlackout.enabled;
+
+        // Disable player controls while warnings are displayed.
+        if (firstPersonController != null)
+            firstPersonController.enabled = false;
+
+        if (playerInput != null)
             playerInput.enabled = false;
-        }
 
-        // Release the mouse cursor.
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-    }
+        // Prevent lighting effects during the warnings.
+        if (facilityBlackout != null)
+            facilityBlackout.enabled = false;
 
-    public void DismissWarning()
-    {
-        warningActive = false;
+        // Display the photosensitivity warning first.
+        currentState = WarningState.Epilepsy;
+
+        if (epilepsyWarningPanel != null)
+            epilepsyWarningPanel.SetActive(true);
 
         if (warningPanel != null)
             warningPanel.SetActive(false);
 
-        // Restore the original player controller state.
-        if (firstPersonController != null)
-            firstPersonController.enabled =
-                controllerWasEnabled;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
 
-        // Restore player input.
+    void Update()
+    {
+        if (currentState == WarningState.Gameplay)
+            return;
+
+        if (currentState == WarningState.Epilepsy)
+        {
+            BlinkPrompt(epilepsyContinuePrompt);
+
+            if (Keyboard.current != null &&
+                Keyboard.current.spaceKey.wasPressedThisFrame)
+            {
+                ShowMeltdownWarning();
+            }
+        }
+        else if (currentState == WarningState.Meltdown)
+        {
+            BlinkPrompt(continuePrompt);
+
+            if (Keyboard.current != null &&
+                Keyboard.current.eKey.wasPressedThisFrame)
+            {
+                DismissWarning();
+            }
+        }
+    }
+
+    void BlinkPrompt(TMP_Text prompt)
+    {
+        if (prompt == null)
+            return;
+
+        Color color = prompt.color;
+
+        color.a = Mathf.PingPong(
+            Time.unscaledTime * blinkSpeed, 1f
+        );
+
+        prompt.color = color;
+    }
+
+    void ShowMeltdownWarning()
+    {
+        currentState = WarningState.Meltdown;
+
+        // Hide the photosensitivity warning.
+        if (epilepsyWarningPanel != null)
+            epilepsyWarningPanel.SetActive(false);
+
+        // Display the reactor warning.
+        if (warningPanel != null)
+            warningPanel.SetActive(true);
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    // Kept public for compatibility with existing references.
+    public void ShowWarning()
+    {
+        if (currentState == WarningState.Gameplay)
+            return;
+
+        ShowMeltdownWarning();
+    }
+
+    public void DismissWarning()
+    {
+        if (currentState != WarningState.Meltdown)
+            return;
+
+        currentState = WarningState.Gameplay;
+
+        if (epilepsyWarningPanel != null)
+            epilepsyWarningPanel.SetActive(false);
+
+        if (warningPanel != null)
+            warningPanel.SetActive(false);
+
+        // Restore player movement and camera controls.
+        if (firstPersonController != null)
+            firstPersonController.enabled = controllerWasEnabled;
+
+        // Restore gameplay input.
         if (playerInput != null)
             playerInput.enabled = inputWasEnabled;
 
-        // Lock the mouse for first-person gameplay.
+        // Begin the facility lighting cycle.
+        if (facilityBlackout != null)
+            facilityBlackout.enabled = lightingWasEnabled;
+
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }

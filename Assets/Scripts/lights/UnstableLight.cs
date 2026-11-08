@@ -1,33 +1,9 @@
 
-using System.Collections;
 using UnityEngine;
 
 [RequireComponent(typeof(Light))]
 public class UnstableLight : MonoBehaviour
 {
-    [Header("Normal Flickering")]
-    public float minWaitTime = 5f;
-    public float maxWaitTime = 15f;
-
-    public int minFlickers = 2;
-    public int maxFlickers = 6;
-
-    public float minFlickerTime = 0.04f;
-    public float maxFlickerTime = 0.15f;
-
-    [Header("Individual Blackouts")]
-    public bool enableBlackouts = true;
-
-    [Range(0f, 1f)]
-    public float blackoutChance = 0.3f;
-
-    public float minOffTime = 3f;
-    public float maxOffTime = 6f;
-
-    [Header("Blackout Effects")]
-    public bool flickerBeforeBlackout = true;
-    public bool flickerAfterBlackout = true;
-
     [Header("Light Fixture")]
     public Renderer fixtureRenderer;
     public int emissionMaterialIndex = 0;
@@ -38,17 +14,24 @@ public class UnstableLight : MonoBehaviour
     private Material fixtureMaterial;
     private Color originalEmission;
 
-    private Coroutine behaviorCoroutine;
+    private bool isOn = true;
+    private float nextFlickerTime = 0f;
 
-    // Facility-wide blackout override.
-    private bool facilityBlackout = false;
+    private enum LightPhase
+    {
+        Stable,
+        Unstable,
+        Blackout,
+        Recovery
+    }
+
+    private LightPhase currentPhase = LightPhase.Stable;
 
     void Awake()
     {
         lightSource = GetComponent<Light>();
         originalIntensity = lightSource.intensity;
 
-        // Automatically find the glowing fixture.
         if (fixtureRenderer == null && transform.parent != null)
         {
             Renderer[] renderers =
@@ -59,11 +42,11 @@ public class UnstableLight : MonoBehaviour
                 if (renderer.transform == transform)
                     continue;
 
-                Material[] sharedMaterials = renderer.sharedMaterials;
+                Material[] materials = renderer.sharedMaterials;
 
-                for (int i = 0; i < sharedMaterials.Length; i++)
+                for (int i = 0; i < materials.Length; i++)
                 {
-                    Material material = sharedMaterials[i];
+                    Material material = materials[i];
 
                     if (material != null &&
                         material.name.StartsWith("Neon_01"))
@@ -79,7 +62,6 @@ public class UnstableLight : MonoBehaviour
             }
         }
 
-        // Create an individual material instance.
         if (fixtureRenderer != null)
         {
             Material[] materials = fixtureRenderer.materials;
@@ -87,7 +69,8 @@ public class UnstableLight : MonoBehaviour
             if (emissionMaterialIndex >= 0 &&
                 emissionMaterialIndex < materials.Length)
             {
-                fixtureMaterial = materials[emissionMaterialIndex];
+                fixtureMaterial =
+                    materials[emissionMaterialIndex];
 
                 if (fixtureMaterial != null &&
                     fixtureMaterial.HasProperty("_EmissionColor"))
@@ -98,10 +81,6 @@ public class UnstableLight : MonoBehaviour
                 else
                 {
                     fixtureMaterial = null;
-                    Debug.LogWarning(
-                        "Fixture material has no emission color.",
-                        this
-                    );
                 }
             }
         }
@@ -109,62 +88,94 @@ public class UnstableLight : MonoBehaviour
 
     void OnEnable()
     {
-        behaviorCoroutine = StartCoroutine(LightBehavior());
+        SetStable();
     }
 
-    void OnDisable()
+    public void SetStable()
     {
-        if (behaviorCoroutine != null)
+        if (currentPhase != LightPhase.Stable)
         {
-            StopCoroutine(behaviorCoroutine);
-            behaviorCoroutine = null;
+            currentPhase = LightPhase.Stable;
+            nextFlickerTime = 0f;
         }
 
-        facilityBlackout = false;
-        RestoreLight();
+        SetBrightness(1f);
     }
 
-    void OnDestroy()
+    public void SetInstability(
+        float progress,
+        float minChance,
+        float maxChance,
+        float minInterval,
+        float maxInterval)
     {
-        if (fixtureMaterial != null)
+        if (currentPhase != LightPhase.Unstable)
         {
-            Destroy(fixtureMaterial);
+            currentPhase = LightPhase.Unstable;
+            nextFlickerTime = 0f;
         }
+
+        if (Time.time < nextFlickerTime)
+            return;
+
+        float chance = Mathf.Lerp(
+            minChance,
+            maxChance,
+            progress
+        );
+
+        // Each light independently decides whether to blink.
+        isOn = Random.value >= chance;
+
+        SetBrightness(isOn ? 1f : 0f);
+
+        nextFlickerTime = Time.time + Random.Range(
+            minInterval,
+            maxInterval
+        );
     }
 
-    // Called by FacilityBlackout.cs.
-    public void SetFacilityBlackout(bool isBlackout)
+    public void SetBlackout()
     {
-        facilityBlackout = isBlackout;
+        currentPhase = LightPhase.Blackout;
+        SetBrightness(0f);
+    }
 
-        if (isBlackout)
+    public void SetRecovery(
+        float progress,
+        float minInterval,
+        float maxInterval)
+    {
+        if (currentPhase != LightPhase.Recovery)
         {
-            SetBrightness(0f);
+            currentPhase = LightPhase.Recovery;
+            nextFlickerTime = 0f;
         }
-        else
-        {
-            RestoreLight();
-        }
+
+        if (Time.time < nextFlickerTime)
+            return;
+
+        // Lights gradually return at different times.
+        isOn = Random.value < progress;
+
+        SetBrightness(isOn ? 1f : 0f);
+
+        nextFlickerTime = Time.time + Random.Range(
+            minInterval,
+            maxInterval
+        );
     }
 
     void SetBrightness(float ratio)
     {
-        // Global blackouts override individual flickering.
-        if (facilityBlackout)
-        {
-            ratio = 0f;
-        }
-
         ratio = Mathf.Clamp01(ratio);
 
-        // Control the actual light.
         if (lightSource != null)
         {
             lightSource.intensity =
                 originalIntensity * ratio;
         }
 
-        // Control the fixture's emission.
         if (fixtureMaterial != null)
         {
             fixtureMaterial.SetColor(
@@ -174,95 +185,14 @@ public class UnstableLight : MonoBehaviour
         }
     }
 
-    void RestoreLight()
+    void OnDisable()
     {
         SetBrightness(1f);
     }
 
-    IEnumerator LightBehavior()
+    void OnDestroy()
     {
-        while (true)
-        {
-            float waitTime = Random.Range(
-                minWaitTime,
-                maxWaitTime
-            );
-
-            yield return new WaitForSeconds(waitTime);
-
-            // Pause individual behavior during global blackouts.
-            while (facilityBlackout)
-            {
-                yield return null;
-            }
-
-            if (enableBlackouts &&
-                Random.value < blackoutChance)
-            {
-                yield return StartCoroutine(Blackout());
-            }
-            else
-            {
-                yield return StartCoroutine(Flicker());
-            }
-        }
-    }
-
-    IEnumerator Flicker()
-    {
-        int flickers = Random.Range(
-            minFlickers,
-            maxFlickers + 1
-        );
-
-        for (int i = 0; i < flickers; i++)
-        {
-            SetBrightness(0f);
-
-            yield return new WaitForSeconds(
-                Random.Range(
-                    minFlickerTime,
-                    maxFlickerTime
-                )
-            );
-
-            SetBrightness(1f);
-
-            yield return new WaitForSeconds(
-                Random.Range(
-                    minFlickerTime,
-                    maxFlickerTime
-                )
-            );
-        }
-
-        RestoreLight();
-    }
-
-    IEnumerator Blackout()
-    {
-        // Flicker before losing power.
-        if (flickerBeforeBlackout)
-        {
-            yield return StartCoroutine(Flicker());
-        }
-
-        // Individual power failure.
-        SetBrightness(0f);
-
-        yield return new WaitForSeconds(
-            Random.Range(
-                minOffTime,
-                maxOffTime
-            )
-        );
-
-        // Flicker as power returns.
-        if (flickerAfterBlackout)
-        {
-            yield return StartCoroutine(Flicker());
-        }
-
-        RestoreLight();
+        if (fixtureMaterial != null)
+            Destroy(fixtureMaterial);
     }
 }
