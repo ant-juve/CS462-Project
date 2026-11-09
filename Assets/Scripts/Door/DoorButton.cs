@@ -21,6 +21,7 @@ public class DoorButton : MonoBehaviour
 
         if (Physics.Raycast(ray, out RaycastHit hit, interactionDistance))
         {
+            Debug.Log("Looking at" + hit.transform.name);
             if (hit.transform == transform ||
                 hit.transform.IsChildOf(transform))
             {
@@ -28,6 +29,7 @@ public class DoorButton : MonoBehaviour
 
                 if (Input.GetKeyDown(KeyCode.E))
                 {
+                    Debug.Log("E pressed — opening door", door);
                     door.OpenDoor();
                 }
             }
