@@ -42,6 +42,7 @@ namespace UI.Game.Objectives
         {
             var display = Instantiate(_objectiveDisplayPrefab, _objectiveDisplayParent);
             display.Init(obj);
+            Debug.Log($"Objective row initialized: {obj.GetStatusText()}", display.gameObject);
             _listDisplay.Add(display);
         }
 

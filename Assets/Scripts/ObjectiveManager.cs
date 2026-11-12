@@ -41,6 +41,7 @@ namespace Core.Gameplay.Objectives
 
         private void Start(){
             AddObjective(new Objective("Purification Leak Stopped", "Stop purification leak", 1));
+            Debug.Log($"ObjectiveManager started. Objectives: {Objectives.Count}");
         }
     }
 }
