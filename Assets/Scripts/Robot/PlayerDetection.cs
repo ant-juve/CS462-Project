@@ -11,6 +11,7 @@ public class PlayerDetection : MonoBehaviour
 
     public bool CanSeePlayer { get; private set; }
     float nextCheck;
+    readonly RaycastHit[] obstructionHits = new RaycastHit[8];
 
     // Update is called once per frame
     void Update()
@@ -22,22 +23,48 @@ public class PlayerDetection : MonoBehaviour
 
     bool CheckVisibility()
     {
+        if (player == null) return false;
+
         Vector3 eye = transform.position + Vector3.up * eyeHeight;
         Vector3 target = player.position + Vector3.up * 1.0f; // aim at chest, not feet
         Vector3 toPlayer = target - eye;
-        Debug.DrawRay(eye, toPlayer, Color.red, checkInterval);
         float dist = toPlayer.magnitude;
 
+        Color debugColor = Color.red;
+        bool canSee = false;
+
         // 1. Range (sqrMagnitude version is cheaper if you have many mobs)
-        if (dist > detectionRange) return false;
-
+        if (dist > detectionRange)
+        {
+            debugColor = Color.yellow;
+        }
         // 2. Field of view
-        if (Vector3.Angle(transform.forward, toPlayer) > fieldOfView * 0.5f) return false;
-
+        else if (Vector3.Angle(transform.forward, toPlayer) > fieldOfView * 0.5f)
+        {
+            debugColor = new Color(1f, 0.5f, 0f);
+        }
         // 3. Line of sight
-        if (Physics.Raycast(eye, toPlayer.normalized, dist, obstructionMask)) return false;
+        else
+        {
+            canSee = !IsObstructed(eye, toPlayer.normalized, dist);
+            debugColor = canSee ? Color.green : Color.red;
+        }
 
-        return true;
+        Debug.DrawRay(eye, toPlayer, debugColor, checkInterval);
+        return canSee;
+    }
+
+    bool IsObstructed(Vector3 origin, Vector3 direction, float distance)
+    {
+        int count = Physics.RaycastNonAlloc(origin, direction, obstructionHits, distance, obstructionMask, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            Collider hit = obstructionHits[i].collider;
+            if (hit == null) continue;
+            if (hit.transform == transform || hit.transform.IsChildOf(transform)) continue;
+            return true;
+        }
+        return false;
     }
 
     void OnDrawGizmosSelected()
