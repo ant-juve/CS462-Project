@@ -15,6 +15,16 @@ public class RobotController : MonoBehaviour
     private float verticalVelocity;
     private PlayerDetection detection;
 
+    public State CurrentState => currentState;
+    public float MoveSpeed => moveSpeed;
+
+    void Awake()
+    {
+        // Every robot gets its synthesized hum and alert without editing each scene instance
+        if (GetComponent<RobotAudio>() == null)
+            gameObject.AddComponent<RobotAudio>();
+    }
+
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
